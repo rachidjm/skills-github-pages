@@ -357,7 +357,7 @@ async function evaluate(mint) {
     devLaunchPct: t.devTokens / CFG.supply, slot0Pct: slot0Tokens / CFG.supply, top10, impact, sniperHeld, devHeld, sameTx, pack,
   };
   // Puntuación de riesgo 0–100 (100 = más limpio). Pesos propios inspirados en reglas públicas de escáneres de holders
-  f.score = Math.round(35 * lin(impact, 0.10, 0.60) + 20 * lin(f.slot0Pct, 0.05, 0.30) + 15 * lin(sniperHeld, 0.01, 0.15) + 15 * lin(top10, 0.25, 0.70) + 15 * lin(f.devLaunchPct, 0.03, 0.15));
+  f.score = f.uniqueBuyers < 3 ? 0 : Math.round(35 * lin(impact, 0.10, 0.60) + 20 * lin(f.slot0Pct, 0.05, 0.30) + 15 * lin(sniperHeld, 0.01, 0.15) + 15 * lin(top10, 0.25, 0.70) + 15 * lin(f.devLaunchPct, 0.03, 0.15));
   const v = [];
   if (f.devSold) v.push('el creador ya vendió');
   if (f.devLaunchPct >= 0.15) v.push(`el creador compró el ${Math.round(f.devLaunchPct * 100)}% al lanzar`);
@@ -377,7 +377,7 @@ async function evaluate(mint) {
   if (v.length) { data.totals.veto++; log('r', `VETO ${esc(t.symbol)} · ${esc(v[0])}`); tape('r', 'VETO', `$${t.symbol} · ${v[0]}`); }
   if (n) { data.totals.entry++; log('g', `ENTRY ${esc(t.symbol)} · ${n} estrategias · riesgo ${f.score}/100`); tape('g', 'ENTRY', `$${t.symbol} · ${n} estrategias`); }
   else if (!v.length) log('a', `SKIP ${esc(t.symbol)} · ${f.uniqueBuyers} compradores · ${f.buyVol} SOL`);
-  stack.unshift({ symbol: t.symbol, state: t.state, score: f.score, n, why: v.length ? v.slice(0, 2).join(' · ') : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}` });
+  stack.unshift({ symbol: t.symbol, state: t.state, vetoed: v.length > 0, score: f.uniqueBuyers < 3 ? '–' : f.score, n, why: v.length ? v.slice(0, 2).join(' · ') + (n ? ' · entran solo estrategias sin filtro de vetos' : '') : f.uniqueBuyers < 3 ? `solo ${f.uniqueBuyers} compradores: sin datos para puntuar` : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}` });
   stack.length = Math.min(stack.length, 40);
 }
 
@@ -568,7 +568,7 @@ function render() {
   $('obs').innerHTML = obs.map(o => `<div class="ob" style="border-left-color:${o.c}"><span class="t">${o.t}</span><span class="v" style="color:${o.c}">${o.v}</span><span class="d">${o.d}</span>${spark(o.s, o.c)}</div>`).join('');
   $('constTxt').textContent = `${constel.length} tokens · ${tokens.size} en seguimiento`;
   // Pila de decisiones
-  if (stack.length) $('stack').innerHTML = stack.map(d => `<div class="dc ${d.state}"><span class="lab">${d.state === 'entry' ? 'ENTRADA' : d.state === 'veto' ? 'VETO' : 'SIN ENTRADA'}</span><span class="nm">$${esc(d.symbol)}${d.n ? ` · ${d.n} estrategias` : ''}</span><span class="sc">${d.score}</span><span class="why">${esc(d.why)}</span></div>`).join('');
+  if (stack.length) $('stack').innerHTML = stack.map(d => `<div class="dc ${d.state}"><span class="lab">${d.state === 'entry' ? (d.vetoed ? 'ENTRADA · CON VETO' : 'ENTRADA') : d.state === 'veto' ? 'VETO' : 'SIN ENTRADA'}</span><span class="nm">$${esc(d.symbol)}${d.n ? ` · ${d.n} estrategias` : ''}</span><span class="sc">${d.score}</span><span class="why">${esc(d.why)}</span></div>`).join('');
   // Aspirantes
   const sc = STRATS.map(s => scoreOf(s.id)).filter(Boolean).sort((a, b) => (b.n >= 10) - (a.n >= 10) || b.lb - a.lb).slice(0, 15);
   $('nStrat').textContent = `${STRATS.length} estrategias · top 15`;
