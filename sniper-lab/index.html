@@ -95,7 +95,32 @@ tr.ch td{background:var(--gBg)}
 .src span{font:600 11px 'JetBrains Mono',ui-monospace,monospace;padding:3px 8px;border-radius:6px;background:var(--panel2);color:var(--soft)}
 .src span.on{color:var(--g);background:var(--gBg)}
 .foot{color:var(--dim);font-size:11px;padding:0 4px 16px}
-@media(max-width:1100px){.r1,.r2,.r3{grid-template-columns:minmax(0,1fr)}}
+.nav{display:flex;gap:4px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px}
+.nav a{font:700 12px 'JetBrains Mono',ui-monospace,monospace;color:var(--soft);text-decoration:none;padding:7px 14px;border-radius:7px}
+.nav a.on{background:#4f8dff;color:#fff}
+.view{display:none}.view.on{display:grid}
+.eyebrow{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.08em;color:#4f8dff}
+.hero{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:18px;align-items:center;background:radial-gradient(120% 140% at 0% 0%,rgba(79,141,255,.12),transparent 55%),var(--panel)}
+.bal{font:800 clamp(46px,7vw,86px)/1 'JetBrains Mono',ui-monospace,monospace;letter-spacing:-.03em;margin:8px 0 6px;white-space:nowrap}
+.pl{font:800 clamp(18px,2.4vw,26px)/1.2 Inter;margin-bottom:6px}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.cards div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.cards span{display:block;font:700 10px 'JetBrains Mono',ui-monospace,monospace;color:var(--soft);letter-spacing:.04em}
+.cards strong{display:block;font:700 18px 'JetBrains Mono',ui-monospace,monospace;margin-top:3px;white-space:nowrap}
+.cards em{font-style:normal;font-size:11px;color:var(--dim)}
+.settings{display:flex;flex-wrap:wrap;gap:12px 18px;align-items:flex-end}
+.settings label{display:grid;gap:5px;font:700 10px 'JetBrains Mono',ui-monospace,monospace;color:var(--soft);letter-spacing:.04em}
+.settings input,.settings select{font:600 16px 'JetBrains Mono',ui-monospace,monospace;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:9px;min-height:42px;padding:0 12px;min-width:120px}
+.settings select{max-width:360px}
+.settings input:focus,.settings select:focus{outline:2px solid #4f8dff;outline-offset:1px}
+.settings .note{font-size:12px;color:var(--soft);flex-basis:100%}
+.pos-table td .barx{display:block;width:120px;height:6px;border-radius:99px;background:linear-gradient(90deg,var(--rBg),#1a2740 30%,var(--gBg));position:relative;margin-left:auto}
+.pos-table td .barx i{position:absolute;top:-3px;width:3px;height:12px;border-radius:2px;background:var(--ink);transform:translateX(-1px)}
+#closedRows td:nth-child(2),#openRows td:first-child{text-align:left}
+.big-pl{font:800 15px 'JetBrains Mono',ui-monospace,monospace}
+.r2b{grid-template-columns:minmax(0,8fr) minmax(0,4fr)}
+@media(max-width:1100px){.r1,.r2,.r3,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:560px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.settings label,.settings input,.settings select{width:100%;max-width:none}}
 @media(max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hlab span:nth-child(odd){visibility:hidden}.counters strong{font-size:15px}}
 </style>
 </head>
@@ -109,12 +134,69 @@ tr.ch td{background:var(--gBg)}
     <div>OPS CERRADAS<strong id="kClosed">0</strong></div>
     <div id="clock">--:--:--<strong id="clockMad">--:--</strong></div>
   </div>
+  <nav class="nav"><a href="#bot" id="navBot" class="on">BOT</a><a href="#lab" id="navLab">LABORATORIO</a></nav>
   <div class="ctl"><span class="live" id="live"><i></i><span id="liveTxt">PAUSA</span></span><button class="go" id="play">▶ PLAY</button><button class="halt" id="stop">■ STOP</button></div>
 </div>
 <div class="tape"><div class="tag">● EN VIVO</div><div class="run" id="tape">Pulsa PLAY para conectar con Pump.fun y la blockchain de Solana…</div></div>
 
-<div class="wrap">
+<div class="wrap view on" id="viewBot">
   <div class="warn" id="warn"><b>Esta copia no consigue conectarse a la blockchain.</b> Pasa al abrirla como archivo (C:/…) o en vistas previas. Ábrela desde su enlace https o en la app de Claude del PC.</div>
+  <section class="pn hero">
+    <div>
+      <div class="eyebrow">SALDO DEL BOT · DINERO DE PAPEL</div>
+      <div class="bal" id="pfBal">€0,00</div>
+      <div class="pl" id="pfPl">Elige tu capital y pulsa PLAY</div>
+      <div class="sub" id="pfSince"></div>
+    </div>
+    <div class="cards">
+      <div><span>CAPITAL INICIAL</span><strong id="cStart">–</strong><em>con lo que empezó</em></div>
+      <div><span>BENEFICIO / PÉRDIDA</span><strong id="cPl">–</strong><em id="cPlPct">–</em></div>
+      <div><span>YA COBRADO</span><strong id="cReal">–</strong><em>operaciones cerradas</em></div>
+      <div><span>EN JUEGO AHORA</span><strong id="cOpen">–</strong><em id="cOpenSub">operaciones abiertas</em></div>
+      <div><span>DINERO LIBRE</span><strong id="cCash">–</strong><em>listo para invertir</em></div>
+      <div><span>INVERTIDO AHORA</span><strong id="cInv">–</strong><em id="cInvSub">en 0 operaciones</em></div>
+      <div><span>ACIERTO</span><strong id="cWrP">–</strong><em id="cWrSub">0 operaciones</em></div>
+      <div><span>MAYOR GANANCIA</span><strong id="cBest">–</strong><em id="cWorst">peor: –</em></div>
+    </div>
+  </section>
+
+  <section class="pn">
+    <h2>AJUSTES DEL BOT <em>se guardan en este navegador</em></h2>
+    <div class="settings">
+      <label for="inStart">CAPITAL INICIAL (€)<input id="inStart" type="number" min="1" step="1" value="100" inputmode="decimal"></label>
+      <label for="inMode">CUÁNTO INVIERTE POR OPERACIÓN<select id="inMode"><option value="fixed">Cantidad fija en €</option><option value="pct">% del saldo</option></select></label>
+      <label for="inSize" id="lblSize">IMPORTE (€)<input id="inSize" type="number" min="0.1" step="0.5" value="10" inputmode="decimal"></label>
+      <label for="inStrat">ESTRATEGIA<select id="inStrat"></select></label>
+      <button class="go" id="pfReset">Empezar con este capital</button>
+      <div class="note" id="pfNote">"Empezar con este capital" pone el saldo a cero y arranca de nuevo. El importe y la estrategia se pueden cambiar en cualquier momento y se aplican a las siguientes operaciones.</div>
+    </div>
+  </section>
+
+  <div class="row r2b">
+    <section class="pn">
+      <h2>EVOLUCIÓN DEL SALDO <em id="eqTxt">línea discontinua = capital inicial</em></h2>
+      <div class="fig" style="min-height:260px"><svg id="eq"></svg></div>
+    </section>
+    <section class="pn">
+      <h2>REPARTO DEL DINERO <em>ahora mismo</em></h2>
+      <div class="fig" style="min-height:200px"><svg id="donut"></svg></div>
+      <div class="legend" style="justify-content:center"><span><b style="background:#4f8dff"></b>libre</span><span><b style="background:var(--a)"></b>invertido</span><span><b style="background:var(--g)"></b>ganancia abierta</span></div>
+    </section>
+  </div>
+
+  <section class="pn">
+    <h2>OPERANDO AHORA <em id="openTxt">0 posiciones</em></h2>
+    <div class="scroll"><table class="pos-table"><thead><tr><th>Token</th><th>Invertido</th><th>Vale ahora</th><th>Resultado</th><th>Precio</th><th>Stop ← → Objetivo</th><th>Tiempo</th></tr></thead><tbody id="openRows"><tr><td colspan="7" style="color:var(--soft)">Ninguna posición abierta. Cuando la estrategia entre en un token aparecerá aquí con el dinero invertido.</td></tr></tbody></table></div>
+  </section>
+
+  <section class="pn">
+    <h2>HISTORIAL DE OPERACIONES <em id="histTxt">0 cerradas</em></h2>
+    <div class="scroll"><table><thead><tr><th>Hora</th><th>Token</th><th>Invertido</th><th>Recuperado</th><th>Resultado</th><th>%</th><th>Motivo</th><th>Saldo tras</th></tr></thead><tbody id="closedRows"><tr><td colspan="8" style="color:var(--soft)">Sin operaciones cerradas todavía.</td></tr></tbody></table></div>
+  </section>
+</div>
+
+<div class="wrap view" id="viewLab">
+  <div class="warn" id="warnLab" style="display:none"></div>
 
   <div class="row r1">
     <section class="pn">
@@ -177,8 +259,8 @@ tr.ch td{background:var(--gBg)}
       <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span>X · falta clave</span><span>Telegram · falta api_id</span><span>IA · falta clave</span></div>
     </section>
   </div>
-  <div class="foot">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button></div>
-</div>
+  </div>
+<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button></div>
 
 <script>
 {
@@ -389,7 +471,7 @@ function tryEntries(t, now) {
     if (t.decided.has(s.id) || age < s.entry) continue;
     t.decided.add(s.id);
     if (age > s.entry + 60 || !alive) continue;
-    if (s.filter.f(t.f, t)) t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 });
+    if (s.filter.f(t.f, t)) { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); }
   }
 }
 function settle(t, now, forceAll = false) {
@@ -403,6 +485,7 @@ function settle(t, now, forceAll = false) {
     else if (now - p.at > CFG.holdMin * 60e3) reason = 'tiempo';
     if (!reason) continue;
     const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig) : t.mcap) / p.entry;
+    pfOnClose(t, id, raw, reason, now);
     record(id, netReturn(raw), t, reason, now);
     t.pos.delete(id);
   }
@@ -472,6 +555,123 @@ function setRunning(v) {
   else { if (ws) { ws.onclose = null; ws.close(); ws = null; } log('a', 'STOP · no entra en tokens nuevos; las posiciones abiertas se siguen gestionando'); }
 }
 
+
+// ===================== Cartera del bot (capital elegido por el usuario) =====================
+const PF_KEY = 'snlab_portfolio_v1', FALLBACK = 'e20_tp2_sl25_clean';
+const money = v => '€' + v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '') + money(Math.abs(v));
+const newPf = (start, mode, size, strategy) => ({ start, cash: start, mode, size, strategy, positions: {}, closed: [], curve: [{ ts: Date.now(), eq: start }], startedAt: Date.now() });
+let pf = null;
+try { pf = JSON.parse(localStorage.getItem(PF_KEY)); } catch {}
+if (!pf || !pf.positions) pf = newPf(100, 'fixed', 10, 'auto');
+const pfSave = () => { try { localStorage.setItem(PF_KEY, JSON.stringify(pf)); } catch {} };
+setInterval(pfSave, 10000);
+// € que recibes al vender: comisiones %, slippage y fee de red fijo por transacción
+function pfValue(inv, raw) { const cost = (CFG.feePct + CFG.slipPct) / 100, fix = CFG.netFeeSol * solEur; const bought = Math.max(0, inv - fix) / (1 + cost); return Math.max(0, bought * raw * (1 - cost) - fix); }
+// Las posiciones abiertas antes de recargar la página ya no se siguen: se cierran a precio de entrada (menos costes)
+for (const p of Object.values(pf.positions)) { const got = pfValue(p.inv, 1); pf.cash += got; pf.closed.unshift({ ts: Date.now(), symbol: p.symbol, mint: p.mint, id: p.id, inv: p.inv, got, reason: 'página recargada', held: 0, eqAfter: pf.cash }); }
+pf.positions = {};
+function pfTarget() {
+  if (pf.strategy !== 'auto' && STRAT.has(pf.strategy)) return pf.strategy;
+  if (data.champ) return data.champ.id;
+  const c = STRATS.map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
+  return c ? c.id : FALLBACK;
+}
+function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = tokens.get(p.mint); inv += p.inv; val += pfValue(p.inv, t ? t.mcap / p.entry : 1); } return { inv, val }; }
+const pfEquity = () => pf.cash + pfOpenValue().val;
+function pfOnOpen(t, id) {
+  if (id !== pfTarget()) return;
+  const key = t.mint + '|' + id; if (pf.positions[key]) return;
+  let inv = pf.mode === 'pct' ? pfEquity() * pf.size / 100 : pf.size;
+  inv = Math.min(inv, pf.cash);
+  if (inv < 0.1) { log('a', `SIN SALDO para entrar en ${esc(t.symbol)}`); return; }
+  pf.cash -= inv;
+  pf.positions[key] = { mint: t.mint, symbol: t.symbol, id, inv, entry: t.mcap, at: Date.now() };
+  log('g', `COMPRA ${esc(t.symbol)} · invierte ${money(inv)}`); tape('g', 'COMPRA', `$${t.symbol} ${money(inv)}`);
+  pfSave();
+}
+function pfOnClose(t, id, raw, reason, now) {
+  const key = t.mint + '|' + id, p = pf.positions[key]; if (!p) return;
+  const got = pfValue(p.inv, raw); pf.cash += got; delete pf.positions[key];
+  const eq = pfEquity(), pl = got - p.inv;
+  pf.closed.unshift({ ts: now, symbol: p.symbol, mint: p.mint, id, inv: p.inv, got, reason, held: (now - p.at) / 1000, eqAfter: eq });
+  pf.closed.length = Math.min(pf.closed.length, 500);
+  pf.curve.push({ ts: now, eq }); if (pf.curve.length > 2000) pf.curve.shift();
+  log(pl >= 0 ? 'g' : 'r', `VENTA ${esc(p.symbol)} · ${reason} · ${signed(pl)} (${pc(100 * pl / p.inv)})`); tape(pl >= 0 ? 'g' : 'r', 'VENTA', `$${p.symbol} ${signed(pl)}`);
+  pfSave();
+}
+// Ajustes
+const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat');
+inStrat.innerHTML = '<option value="auto">Automática: la campeona del torneo</option>' + [...STRATS].sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+const syncInputs = () => { inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
+syncInputs();
+inMode.onchange = () => { pf.mode = inMode.value; pf.size = pf.mode === 'pct' ? 10 : Math.max(1, Math.round(pf.start / 10)); syncInputs(); pfSave(); };
+inSize.onchange = () => { const v = Number(inSize.value); if (v > 0) pf.size = v; syncInputs(); pfSave(); };
+inStrat.onchange = () => { pf.strategy = inStrat.value; pfSave(); log('c', `Estrategia del bot: ${inStrat.value === 'auto' ? 'automática (campeona)' : esc(STRAT.get(inStrat.value).name)}`); };
+$('pfReset').onclick = () => {
+  const v = Number(inStart.value); if (!(v > 0)) { inStart.focus(); return; }
+  pf = newPf(v, inMode.value, Number(inSize.value) > 0 ? Number(inSize.value) : 10, inStrat.value); syncInputs(); pfSave();
+  log('c', `Nueva cartera: ${money(v)} · ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación`); lastClosedLen = -1;
+};
+
+function drawEq() {
+  const s = $('eq'), W = s.clientWidth, H = s.clientHeight; if (!W || !H) return;
+  const pts = [...pf.curve.map(c => c.eq), pfEquity()];
+  const lo = Math.min(pf.start, ...pts), hi = Math.max(pf.start, ...pts), pad = 22, span = (hi - lo) || pf.start * 0.02;
+  const x = i => 70 + (W - 70 - pad) * i / Math.max(1, pts.length - 1), y = v => pad + (H - 2 * pad) * (1 - (v - lo + span * 0.1) / (span * 1.2));
+  const path = pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(''), col = pts.at(-1) >= pf.start ? '#3ef08a' : '#ff4d6d';
+  const ticks = [lo, pf.start, hi].filter((v, i, a) => a.indexOf(v) === i);
+  s.innerHTML = ticks.map(v => `<text x="64" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#7f8fb0" font-family="JetBrains Mono,monospace">${money(v)}</text>`).join('')
+    + `<line x1="70" x2="${W - pad}" y1="${y(pf.start)}" y2="${y(pf.start)}" stroke="#4f8dff" stroke-dasharray="5 5" opacity=".7"/>`
+    + `<path d="${path}L${x(pts.length - 1)},${y(pf.start)}L${x(0)},${y(pf.start)}Z" fill="${col}" opacity=".1"/><path d="${path}" fill="none" stroke="${col}" stroke-width="2.4" stroke-linejoin="round"/>`
+    + `<circle cx="${x(pts.length - 1)}" cy="${y(pts.at(-1))}" r="5" fill="${col}"/>`;
+}
+const eqObs = new ResizeObserver(drawEq); eqObs.observe($('eq'));
+function drawDonut(free, inv, gain) {
+  const s = $('donut'), W = s.clientWidth, H = s.clientHeight; if (!W || !H) return;
+  const tot = Math.max(1e-9, free + inv + gain), R = Math.min(W, H) / 2 - 10, r = R * 0.68, cx = W / 2, cy = H / 2;
+  let a0 = -Math.PI / 2;
+  const seg = (v, c) => { if (v <= 0) return ''; const a1 = a0 + 2 * Math.PI * v / tot - 1e-6, big = a1 - a0 > Math.PI ? 1 : 0;
+    const p = `M${cx + R * Math.cos(a0)},${cy + R * Math.sin(a0)}A${R},${R} 0 ${big} 1 ${cx + R * Math.cos(a1)},${cy + R * Math.sin(a1)}L${cx + r * Math.cos(a1)},${cy + r * Math.sin(a1)}A${r},${r} 0 ${big} 0 ${cx + r * Math.cos(a0)},${cy + r * Math.sin(a0)}Z`; a0 = a1; return `<path d="${p}" fill="${c}"/>`; };
+  s.innerHTML = seg(free, '#4f8dff') + seg(inv, '#ffb547') + seg(gain, '#3ef08a')
+    + `<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="12" fill="#7f8fb0" font-family="JetBrains Mono,monospace">invertido</text><text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="18" font-weight="700" fill="#dbe6ff" font-family="JetBrains Mono,monospace">${Math.round(100 * (inv + gain) / tot)}%</text>`;
+}
+let lastClosedLen = -1;
+function renderBot() {
+  const { inv, val } = pfOpenValue(), eq = pf.cash + val, pl = eq - pf.start, plPct = 100 * pl / pf.start;
+  const real = pf.closed.reduce((s, c) => s + c.got - c.inv, 0), openPl = val - inv, col = v => v > 0.004 ? 'var(--g)' : v < -0.004 ? 'var(--r)' : 'var(--ink)';
+  $('pfBal').textContent = money(eq); $('pfBal').style.color = col(pl);
+  $('pfPl').textContent = `${pl >= 0 ? '▲' : '▼'} ${signed(pl)} (${pc(plPct, 2)}) desde ${money(pf.start)}`; $('pfPl').style.color = col(pl);
+  $('pfSince').textContent = `Empezó el ${madrid(pf.startedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · invierte ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación · ${pf.strategy === 'auto' ? 'estrategia automática → ' : ''}${STRAT.get(pfTarget())?.name || ''}`;
+  $('cStart').textContent = money(pf.start);
+  $('cPl').textContent = signed(pl); $('cPl').style.color = col(pl); $('cPlPct').textContent = pc(plPct, 2) + ' sobre el capital';
+  $('cReal').textContent = signed(real); $('cReal').style.color = col(real);
+  $('cOpen').textContent = signed(openPl); $('cOpen').style.color = col(openPl); $('cOpenSub').textContent = `ganancia o pérdida sin cerrar`;
+  $('cCash').textContent = money(pf.cash);
+  const nOpen = Object.keys(pf.positions).length;
+  $('cInv').textContent = money(inv); $('cInvSub').textContent = `en ${nOpen} operación${nOpen === 1 ? '' : 'es'}`;
+  const done = pf.closed.filter(c => c.reason !== 'página recargada'), w = done.filter(c => c.got > c.inv).length;
+  $('cWrP').textContent = done.length ? Math.round(100 * w / done.length) + '%' : '–'; $('cWrSub').textContent = `${w} de ${done.length} operaciones`;
+  if (done.length) { const best = Math.max(...done.map(c => c.got - c.inv)), worst = Math.min(...done.map(c => c.got - c.inv)); $('cBest').textContent = signed(best); $('cBest').style.color = col(best); $('cWorst').textContent = 'peor: ' + signed(worst); }
+  drawEq(); drawDonut(pf.cash, Math.min(inv, val), Math.max(0, val - inv));
+  // Posiciones abiertas
+  const rows = Object.values(pf.positions).map(p => {
+    const t = tokens.get(p.mint), raw = t ? t.mcap / p.entry : 1, v = pfValue(p.inv, raw), d = v - p.inv, st = STRAT.get(p.id), lo = 1 - st.sl / 100;
+    const at = Math.max(0, Math.min(100, 100 * Math.log(raw / lo) / Math.log(st.tp / lo)));
+    return `<tr><td><b>$${esc(p.symbol)}</b><br><span class="sub">${esc(st.name)}</span></td><td>${money(p.inv)}</td><td>${money(v)}</td><td class="big-pl" style="color:${col(d)}">${signed(d)}<br><span style="font-size:11px">${pc(100 * d / p.inv)}</span></td><td>${raw.toFixed(2).replace('.', ',')}x</td><td><span class="barx"><i style="left:${at}%"></i></span></td><td>${dur((Date.now() - p.at) / 1000)}</td></tr>`;
+  });
+  $('openTxt').textContent = `${nOpen} posicion${nOpen === 1 ? '' : 'es'} · ${money(inv)} invertidos`;
+  $('openRows').innerHTML = rows.length ? rows.join('') : `<tr><td colspan="7" style="color:var(--soft)">${running ? 'Ninguna posición abierta. Cuando la estrategia entre en un token aparecerá aquí con el dinero invertido.' : 'Pulsa PLAY para que el bot empiece a operar.'}</td></tr>`;
+  if (pf.closed.length !== lastClosedLen) {
+    lastClosedLen = pf.closed.length;
+    $('histTxt').textContent = `${pf.closed.length} cerradas · resultado ${signed(real)}`;
+    $('closedRows').innerHTML = pf.closed.length ? pf.closed.slice(0, 200).map(c => { const d = c.got - c.inv; return `<tr><td>${madrid(c.ts, { hour: '2-digit', minute: '2-digit' })}</td><td><b>$${esc(c.symbol)}</b></td><td>${money(c.inv)}</td><td>${money(c.got)}</td><td class="big-pl" style="color:${col(d)}">${signed(d)}</td><td style="color:${col(d)}">${pc(100 * d / c.inv)}</td><td>${esc(c.reason)}</td><td>${money(c.eqAfter)}</td></tr>`; }).join('') : '<tr><td colspan="8" style="color:var(--soft)">Sin operaciones cerradas todavía.</td></tr>';
+  }
+}
+const dur = sec => sec < 60 ? `${Math.round(sec)} s` : `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s`;
+function route() { const lab = location.hash === '#lab'; $('viewBot').classList.toggle('on', !lab); $('viewLab').classList.toggle('on', lab); $('navBot').classList.toggle('on', !lab); $('navLab').classList.toggle('on', lab); drawChart(); drawEq(); }
+window.addEventListener('hashchange', route); route();
+
 // ===================== Pintado =====================
 let hourMetric = 'tokens';
 $('hlab').innerHTML = Array.from({ length: 24 }, (_, i) => `<span>${i}</span>`).join('');
@@ -496,6 +696,7 @@ const chartObs = new ResizeObserver(drawChart); chartObs.observe($('chart'));
 const cv = $('const'), cx = cv.getContext('2d');
 function drawConst(ts) {
   const W = cv.clientWidth, H = cv.clientHeight, dpr = devicePixelRatio || 1;
+  if (W < 40 || H < 40) { requestAnimationFrame(drawConst); return; }   // pestaña oculta
   if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
   cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, W, H);
   const cxm = W / 2, cym = H / 2, Rm = Math.min(W, H) / 2 - 16, rot = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : ts / 60000;
@@ -575,6 +776,7 @@ function render() {
   if (sc.length) $('table').innerHTML = sc.map(x => `<tr class="${data.champ?.id === x.id ? 'ch' : ''}"><td>${esc(STRAT.get(x.id).name)}</td><td>${data.stats[x.id].n}</td><td>${Math.round(x.wr)}%</td><td style="color:${x.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.mean / 100)}</td><td style="color:${x.lb >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.lb / 100)}</td><td>${eur(data.stats[x.id].sum / 100)}</td></tr>`).join('');
   // Cinta de operaciones
   if (data.last.length) $('trades').innerHTML = data.last.map(o => `<div class="tt"><span class="s" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${o.net > 0 ? 'ACIERTO' : 'FALLO'}</span><span><b>$${esc(o.symbol)}</b> · ${o.reason}</span><span class="n" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${pc(o.net)}</span><span class="w">${esc(STRAT.get(o.id)?.name || o.id)} · ${madrid(o.ts, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('');
+  renderBot();
   $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY';
   const tp = tapeItems.join(' &nbsp;·&nbsp; ');
   if (tp && tp !== lastTape) { lastTape = tp; $('tape').innerHTML = tp + ` &nbsp;·&nbsp; <b class="c">RPC</b> ${rpcCalls} lecturas`; }
