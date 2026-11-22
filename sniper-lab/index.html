@@ -119,6 +119,8 @@ tr.ch td{background:var(--gBg)}
 #closedRows td:nth-child(2),#openRows td:first-child{text-align:left}
 .big-pl{font:800 15px 'JetBrains Mono',ui-monospace,monospace}
 .r2b{grid-template-columns:minmax(0,8fr) minmax(0,4fr)}
+.toast{position:fixed;left:50%;top:84px;transform:translate(-50%,-20px);opacity:0;pointer-events:none;z-index:9;background:#4f8dff;color:#fff;font:700 14px Inter;padding:12px 18px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.5);transition:.25s;max-width:calc(100vw - 24px)}
+.toast.on{opacity:1;transform:translate(-50%,0)}
 @media(max-width:1100px){.r1,.r2,.r3,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:560px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.settings label,.settings input,.settings select{width:100%;max-width:none}}
 @media(max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hlab span:nth-child(odd){visibility:hidden}.counters strong{font-size:15px}}
@@ -137,6 +139,7 @@ tr.ch td{background:var(--gBg)}
   <nav class="nav"><a href="#bot" id="navBot" class="on">BOT</a><a href="#lab" id="navLab">LABORATORIO</a></nav>
   <div class="ctl"><span class="live" id="live"><i></i><span id="liveTxt">PAUSA</span></span><button class="go" id="play">▶ PLAY</button><button class="halt" id="stop">■ STOP</button></div>
 </div>
+<div class="toast" id="toast" role="status"></div>
 <div class="tape"><div class="tag">● EN VIVO</div><div class="run" id="tape">Pulsa PLAY para conectar con Pump.fun y la blockchain de Solana…</div></div>
 
 <div class="wrap view on" id="viewBot">
@@ -168,7 +171,7 @@ tr.ch td{background:var(--gBg)}
       <label for="inSize" id="lblSize">IMPORTE (€)<input id="inSize" type="number" min="0.1" step="0.5" value="10" inputmode="decimal"></label>
       <label for="inStrat">ESTRATEGIA<select id="inStrat"></select></label>
       <button class="go" id="pfReset">Empezar con este capital</button>
-      <div class="note" id="pfNote">"Empezar con este capital" pone el saldo a cero y arranca de nuevo. El importe y la estrategia se pueden cambiar en cualquier momento y se aplican a las siguientes operaciones.</div>
+      <div class="note" id="pfNote">"Empezar con este capital" pone el saldo a cero y arranca el bot. El bot no entra a ciegas: espera a tener datos suficientes de cada token (al menos 5 compradores y 8 operaciones, mirando hasta 2 minutos) y solo entonces decide. El importe y la estrategia se pueden cambiar en cualquier momento.</div>
     </div>
   </section>
 
@@ -234,13 +237,13 @@ tr.ch td{background:var(--gBg)}
       <div class="obs" id="obs"></div>
     </section>
     <section class="pn">
-      <h2>CONSTELACIÓN DE LANZAMIENTOS <em id="constTxt">0 tokens</em></h2>
+      <h2>MOTOR DE DECISIÓN <em id="constTxt">0 tokens</em></h2>
       <div class="fig" style="min-height:430px"><canvas id="const"></canvas></div>
-      <div class="legend"><span><b style="background:var(--g)"></b>entra alguna estrategia</span><span><b style="background:var(--r)"></b>vetado</span><span><b style="background:var(--a)"></b>sin entrada</span><span><b style="background:var(--c)"></b>evaluando</span></div>
+      <div class="legend"><span>señales → esfera → decisiones</span><span><b style="background:var(--g)"></b>entra</span><span><b style="background:var(--r)"></b>vetado</span><span><b style="background:var(--a)"></b>sin entrada</span><span><b style="background:var(--c)"></b>evaluando</span></div>
     </section>
     <section class="pn">
       <h2>PILA DE DECISIONES <em>puntuación de riesgo 0–100</em></h2>
-      <div class="stack" id="stack"><div class="sub">Las decisiones aparecen 20 s después de cada lanzamiento.</div></div>
+      <div class="stack" id="stack"><div class="sub">Cada token se decide cuando hay datos suficientes (entre 20 s y 2 min tras el lanzamiento).</div></div>
     </section>
   </div>
 
@@ -266,7 +269,8 @@ tr.ch td{background:var(--gBg)}
 {
 // ===================== Configuración =====================
 const CFG = { sizeEur: 1, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
-  feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9 };
+  feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
+  minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
 let solEur = 130;
 fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eur').then(r => r.json()).then(j => { if (j?.solana?.eur) solEur = j.solana.eur; }).catch(() => {});
@@ -303,7 +307,7 @@ function pump() {
 }
 
 // ===================== Estrategias =====================
-const ENTRIES = [{ id: 'e20', s: 20, txt: '20 s' }, { id: 'e120', s: 120, txt: '2 min' }, { id: 'e600', s: 600, txt: '10 min' }];
+const ENTRIES = [{ id: 'info', txt: 'Al tener datos suficientes' }, { id: 'confirm', txt: 'Datos + 1 min de confirmación' }];
 const TPS = [1.5, 2, 3], SLS = [25, 40];
 const FILTERS = [
   { id: 'all', txt: 'todos', f: () => true },
@@ -315,7 +319,6 @@ const FILTERS = [
   { id: 'bundle', txt: '3+ compras en el bloque inicial', f: x => x.bundleBuys >= 3 },
   { id: 'serial', txt: 'creador en serie', f: x => x.creatorLaunches > 1 },
   { id: 'accel_devok', txt: 'acelerando y creador sin vender', f: x => x.accel && !x.devSold },
-  { id: 'rising', txt: 'sigue subiendo al entrar', f: (x, t) => t.mcap > t.m20 * 1.1 },
   // Nuevos: reglas de riesgo de holders (idea pública de escáneres tipo QuantumOrb, código propio)
   { id: 'clean', txt: 'sin vetos de riesgo', f: x => !x.vetoes.length },
   { id: 'score60', txt: 'riesgo ≥60/100', f: x => x.score >= 60 },
@@ -323,8 +326,7 @@ const FILTERS = [
 ];
 const STRATS = [];
 for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
-  if (fl.id === 'rising' && e.s === 20) continue;
-  STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.s, tp, sl, filter: fl, name: `Entrar a ${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
+  STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.id, tp, sl, filter: fl, name: `${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
 }
 const STRAT = new Map(STRATS.map(s => [s.id, s]));
 
@@ -394,22 +396,26 @@ async function evaluate(mint) {
   t.phase = 'evaluating';
   const [sigs, csigs, acc] = await Promise.all([
     rpc('getSignaturesForAddress', [t.bc, { limit: 100 }]),
-    rpc('getSignaturesForAddress', [t.creator, { limit: 100 }]).catch(() => []),
+    t.csigs ? Promise.resolve(t.csigs) : rpc('getSignaturesForAddress', [t.creator, { limit: 100 }]).catch(() => []),
     rpc('getMultipleAccounts', [[t.bc], { encoding: 'base64' }]),
   ]);
   const ok = sigs.filter(s => !s.err), oldest = ok.at(-1);
   const t0 = ok.length < 100 && oldest?.blockTime ? oldest.blockTime : Math.floor(t.createdAt / 1000) - 1;
   const createSlot = ok.length < 100 ? oldest?.slot : null;
-  const inWindow = ok.filter(s => s.blockTime && s.blockTime <= t0 + CFG.windowSec).slice(0, CFG.maxTxPerToken);
+  t.csigs = csigs;
+  const tEnd = Math.floor(Date.now() / 1000);
+  // Todo lo ocurrido desde el lanzamiento hasta ahora (si hay muchísimo: los primeros 20 y los últimos 25)
+  const okS = ok.filter(s => s.blockTime).sort((a, b) => a.blockTime - b.blockTime);
+  const inWindow = okS.length > CFG.maxTxPerToken ? [...okS.slice(0, 20), ...okS.slice(-25)] : okS;
   const txs = await Promise.all(inWindow.map(s => rpc('getTransaction', [s.signature, { encoding: 'json', maxSupportedTransactionVersion: 1, commitment: 'confirmed' }]).catch(() => null)));
-  const trades = txs.flatMap(tx => decodeTrades(tx, mint)).filter(x => x.ts <= t0 + CFG.windowSec);
+  const trades = txs.flatMap(tx => decodeTrades(tx, mint));
   const cur = acc?.value?.[0] ? curveRead(acc.value[0].data[0]) : { mcap: t.mcap, vtTokens: 0 };
   t.mcap = cur.mcap || t.mcap;
 
   const buys = trades.filter(x => x.buy), sells = trades.filter(x => !x.buy);
   const ext = buys.filter(x => x.user !== t.creator);
   const byUser = new Map(); for (const b of ext) byUser.set(b.user, (byUser.get(b.user) || 0) + b.sol);
-  const buyVol = buys.reduce((s, b) => s + b.sol, 0), half = t0 + CFG.windowSec / 2;
+  const buyVol = buys.reduce((s, b) => s + b.sol, 0), half = t0 + Math.max(1, tEnd - t0) / 2;
   // Tokens netos por wallet → concentración, impacto de venta y snipers que siguen dentro
   const hold = new Map(); for (const x of trades) hold.set(x.user, (hold.get(x.user) || 0) + (x.buy ? x.tokens : -x.tokens));
   const holds = [...hold.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
@@ -450,7 +456,15 @@ async function evaluate(mint) {
   if (t.creatorLaunches >= 3) v.push(`creador en serie: ${t.creatorLaunches} lanzamientos en 1 h`);
   if (impact >= 0.5) v.push(`una wallet puede hundirlo un ${Math.round(impact * 100)}%`);
   f.vetoes = v;
-  t.f = f; t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
+  // ¿Hay información suficiente para decidir? Si no, espera y vuelve a mirar (máximo 2 minutos)
+  const age = Math.round((Date.now() - t.createdAt) / 1000);
+  f.enough = f.uniqueBuyers >= CFG.minBuyers && trades.length >= CFG.minTrades; f.trades = trades.length; f.decSec = age;
+  if (!f.enough && !v.length && age + CFG.recheckSec <= CFG.maxWaitSec) {
+    t.phase = 'window'; t.state = 'eval';
+    setTimeout(() => evaluate(mint).catch(() => { t.state = 'skip'; tokens.delete(mint); }), CFG.recheckSec * 1000);
+    return;
+  }
+  t.f = f; t.decAt = Date.now(); t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
   const H = data.hours[t.hour]; H.vol += buyVol; H.evald++; if (v.length) H.veto++;
   bump('evald'); bump('inflow', buyVol); bump('score', f.score); if (v.length) bump('veto'); if (f.slot0Pct > 0.15) bump('bundle'); if (t.creatorLaunches > 1) bump('serial');
   tryEntries(t, Date.now());
@@ -458,20 +472,27 @@ async function evaluate(mint) {
   t.state = n ? 'entry' : v.length ? 'veto' : 'skip';
   if (v.length) { data.totals.veto++; log('r', `VETO ${esc(t.symbol)} · ${esc(v[0])}`); tape('r', 'VETO', `$${t.symbol} · ${v[0]}`); }
   if (n) { data.totals.entry++; log('g', `ENTRY ${esc(t.symbol)} · ${n} estrategias · riesgo ${f.score}/100`); tape('g', 'ENTRY', `$${t.symbol} · ${n} estrategias`); }
-  else if (!v.length) log('a', `SKIP ${esc(t.symbol)} · ${f.uniqueBuyers} compradores · ${f.buyVol} SOL`);
-  stack.unshift({ symbol: t.symbol, state: t.state, vetoed: v.length > 0, score: f.uniqueBuyers < 3 ? '–' : f.score, n, why: v.length ? v.slice(0, 2).join(' · ') + (n ? ' · entran solo estrategias sin filtro de vetos' : '') : f.uniqueBuyers < 3 ? `solo ${f.uniqueBuyers} compradores: sin datos para puntuar` : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}` });
+  else if (!v.length) log('a', `SKIP ${esc(t.symbol)} · ${f.enough ? 'no pasa ningún filtro' : 'sin datos suficientes en ' + CFG.maxWaitSec + ' s'} · ${f.uniqueBuyers} compradores`);
+  stack.unshift({ symbol: t.symbol, state: t.state, vetoed: v.length > 0, score: f.uniqueBuyers < 3 ? '–' : f.score, n, why: `decidido a los ${age} s · ` + (v.length ? v.slice(0, 2).join(' · ') + (n ? ' · entran solo estrategias sin filtro de vetos' : '') : !f.enough ? `sin datos suficientes: ${f.uniqueBuyers} compradores y ${f.trades} operaciones en ${age} s` : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}`) });
   stack.length = Math.min(stack.length, 40);
 }
 
 // ===================== Entradas y salidas de todas las estrategias =====================
 function tryEntries(t, now) {
-  if (!running) return;
-  const age = (now - t.createdAt) / 1000, alive = now - t.lastChange < 120e3;
+  if (!running || !t.f) return;
+  const alive = now - t.lastChange < 120e3;
+  const open = s => { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); };
   for (const s of STRATS) {
-    if (t.decided.has(s.id) || age < s.entry) continue;
-    t.decided.add(s.id);
-    if (age > s.entry + 60 || !alive) continue;
-    if (s.filter.f(t.f, t)) { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); }
+    if (t.decided.has(s.id)) continue;
+    if (s.entry === 'info') {            // entra en el momento en que hay datos suficientes
+      t.decided.add(s.id);
+      if (t.f.enough && s.filter.f(t.f, t)) open(s);
+    } else {                             // espera 1 min más y solo entra si el precio sigue subiendo (+10%)
+      if (now - t.decAt < CFG.confirmSec * 1000) continue;
+      t.decided.add(s.id);
+      if (now - t.decAt > (CFG.confirmSec + 60) * 1000 || !alive || !t.f.enough) continue;
+      if (t.mcap > t.m20 * 1.1 && s.filter.f(t.f, t)) open(s);
+    }
   }
 }
 function settle(t, now, forceAll = false) {
@@ -521,7 +542,7 @@ async function poll() {
       tryEntries(t, now);
       const inactive = now - t.lastChange > CFG.inactiveMin * 60e3;
       settle(t, now, inactive);
-      const age = (now - t.createdAt) / 1000, pending = running && age < 700 && !inactive;
+      const age = (now - t.createdAt) / 1000, pending = running && now - (t.decAt || now) < (CFG.confirmSec + 70) * 1000 && !inactive;
       if (!t.pos.size && (!pending || age > CFG.trackMaxMin * 60)) finishToken(t);
     });
   }
@@ -557,7 +578,7 @@ function setRunning(v) {
 
 
 // ===================== Cartera del bot (capital elegido por el usuario) =====================
-const PF_KEY = 'snlab_portfolio_v1', FALLBACK = 'e20_tp2_sl25_clean';
+const PF_KEY = 'snlab_portfolio_v1', FALLBACK = 'info_tp2_sl25_clean';
 const money = v => '€' + v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '') + money(Math.abs(v));
 const newPf = (start, mode, size, strategy) => ({ start, cash: start, mode, size, strategy, positions: {}, closed: [], curve: [{ ts: Date.now(), eq: start }], startedAt: Date.now() });
@@ -600,18 +621,22 @@ function pfOnClose(t, id, raw, reason, now) {
   log(pl >= 0 ? 'g' : 'r', `VENTA ${esc(p.symbol)} · ${reason} · ${signed(pl)} (${pc(100 * pl / p.inv)})`); tape(pl >= 0 ? 'g' : 'r', 'VENTA', `$${p.symbol} ${signed(pl)}`);
   pfSave();
 }
+function toast(msg) { const el = $('toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 4500); }
 // Ajustes
 const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat');
 inStrat.innerHTML = '<option value="auto">Automática: la campeona del torneo</option>' + [...STRATS].sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
-const syncInputs = () => { inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
-syncInputs();
-inMode.onchange = () => { pf.mode = inMode.value; pf.size = pf.mode === 'pct' ? 10 : Math.max(1, Math.round(pf.start / 10)); syncInputs(); pfSave(); };
+const syncInputs = (all = false) => { if (all) inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
+syncInputs(true);
+inMode.onchange = () => { pf.mode = inMode.value; pf.size = pf.mode === 'pct' ? 10 : Math.max(1, Math.round((Number(inStart.value) || pf.start) / 10)); syncInputs(); pfSave(); };
 inSize.onchange = () => { const v = Number(inSize.value); if (v > 0) pf.size = v; syncInputs(); pfSave(); };
 inStrat.onchange = () => { pf.strategy = inStrat.value; pfSave(); log('c', `Estrategia del bot: ${inStrat.value === 'auto' ? 'automática (campeona)' : esc(STRAT.get(inStrat.value).name)}`); };
 $('pfReset').onclick = () => {
   const v = Number(inStart.value); if (!(v > 0)) { inStart.focus(); return; }
-  pf = newPf(v, inMode.value, Number(inSize.value) > 0 ? Number(inSize.value) : 10, inStrat.value); syncInputs(); pfSave();
+  pf = newPf(v, inMode.value, Number(inSize.value) > 0 ? Number(inSize.value) : 10, inStrat.value); syncInputs(true); pfSave();
   log('c', `Nueva cartera: ${money(v)} · ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación`); lastClosedLen = -1;
+  if (!running) setRunning(true);
+  toast(`Cartera reiniciada con ${money(v)} · invierte ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación · bot en marcha`);
+  renderBot();
 };
 
 function drawEq() {
@@ -692,24 +717,48 @@ function drawChart() {
 }
 const chartObs = new ResizeObserver(drawChart); chartObs.observe($('chart'));
 
-// Constelación: cada lanzamiento es un punto en espiral, color según la decisión
+// Esfera de decisiones: miles de partículas, las señales entran por la izquierda y las decisiones salen por la derecha
 const cv = $('const'), cx = cv.getContext('2d');
+const SPH = Array.from({ length: 1600 }, (_, i) => { const y = 1 - 2 * (i + 0.5) / 1600, r = Math.sqrt(1 - y * y), th = i * 2.399963; return [r * Math.cos(th), y, r * Math.sin(th), Math.random()]; });
+const IN_COLS = ['#4cc9ff', '#3ef08a', '#ff4d6d', '#ffb547', '#a78bfa', '#5d94e8'];
+const ST_COL = { entry: '#3ef08a', veto: '#ff4d6d', skip: '#ffb547', eval: '#4cc9ff' };
+const bez = (p0, p1, p2, p3, u) => { const v = 1 - u; return [v * v * v * p0[0] + 3 * v * v * u * p1[0] + 3 * v * u * u * p2[0] + u * u * u * p3[0], v * v * v * p0[1] + 3 * v * v * u * p1[1] + 3 * v * u * u * p2[1] + u * u * u * p3[1]]; };
+function curve(p0, p1, p2, p3, col, phase, ts, still) {
+  cx.beginPath(); cx.moveTo(...p0); cx.bezierCurveTo(...p1, ...p2, ...p3); cx.strokeStyle = col + '88'; cx.lineWidth = 1.4; cx.stroke();
+  if (still) return;
+  for (const off of [0, 0.5]) { const [x, y] = bez(p0, p1, p2, p3, (ts / 2600 + phase + off) % 1); cx.beginPath(); cx.arc(x, y, 2.6, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = 12; cx.fill(); cx.shadowBlur = 0; }
+}
 function drawConst(ts) {
   const W = cv.clientWidth, H = cv.clientHeight, dpr = devicePixelRatio || 1;
   if (W < 40 || H < 40) { requestAnimationFrame(drawConst); return; }   // pestaña oculta
-  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
   cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, W, H);
-  const cxm = W / 2, cym = H / 2, Rm = Math.min(W, H) / 2 - 16, rot = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : ts / 60000;
-  for (let k = 1; k <= 4; k++) { cx.beginPath(); cx.arc(cxm, cym, Rm * k / 4, 0, Math.PI * 2); cx.strokeStyle = 'rgba(76,201,255,.07)'; cx.stroke(); }
-  const col = { entry: '#3ef08a', veto: '#ff4d6d', skip: '#ffb547', eval: '#4cc9ff' };
-  constel.forEach((t, i) => {
-    const r = Rm * (0.12 + 0.88 * i / 160), a = t.ang + rot + i * 0.38;
-    const x = cxm + r * Math.cos(a), y = cym + r * Math.sin(a), size = 2 + Math.min(7, Math.sqrt(t.f?.buyVol || 0) * 2.2);
-    cx.beginPath(); cx.moveTo(cxm, cym); cx.lineTo(x, y); cx.strokeStyle = (col[t.state] || '#4cc9ff') + '18'; cx.stroke();
-    cx.beginPath(); cx.arc(x, y, size, 0, Math.PI * 2); cx.fillStyle = col[t.state] || '#4cc9ff'; cx.shadowColor = cx.fillStyle; cx.shadowBlur = i < 6 ? 14 : 4; cx.fill(); cx.shadowBlur = 0;
-    if (i < 5) { cx.fillStyle = '#dbe6ff'; cx.font = '600 11px JetBrains Mono'; cx.fillText('$' + t.symbol, x + size + 4, y + 4); }
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches, t = still ? 0 : ts;
+  const cxm = W / 2, cym = H / 2, Rr = Math.min(W * 0.3, H * 0.42), rot = t / 14000, cos = Math.cos(rot), sin = Math.sin(rot);
+  const glow = cx.createRadialGradient(cxm, cym, 0, cxm, cym, Rr * 1.25);
+  glow.addColorStop(0, 'rgba(93,148,232,.28)'); glow.addColorStop(.55, 'rgba(93,148,232,.07)'); glow.addColorStop(1, 'rgba(7,11,20,0)');
+  cx.fillStyle = glow; cx.fillRect(0, 0, W, H);
+  // Señales que entran (izquierda)
+  IN_COLS.forEach((c, k) => { const y0 = H * (0.1 + k * 0.16), y1 = cym + (k - 2.5) * Rr * 0.16; curve([0, y0], [W * 0.16, y0], [cxm - Rr * 1.35, y1], [cxm - Rr * 0.92, y1], c, k * 0.17, t, still); });
+  // Decisiones que salen (derecha)
+  stack.slice(0, 8).forEach((d, k) => { const y0 = cym + (k - 3.5) * Rr * 0.12, y1 = H * (0.08 + k * 0.12); curve([cxm + Rr * 0.92, y0], [cxm + Rr * 1.35, y0], [W * 0.84, y1], [W, y1], ST_COL[d.state] || '#4cc9ff', k * 0.13, t, still); });
+  // Partículas de la esfera
+  for (const [x, y, z, rnd] of SPH) {
+    const X = x * cos - z * sin, Z = x * sin + z * cos, px = cxm + X * Rr, py = cym + y * Rr, depth = (Z + 1) / 2;
+    if (rnd > 0.94) { cx.beginPath(); cx.moveTo(cxm, cym); cx.lineTo(px, py); cx.strokeStyle = `rgba(245,196,81,${0.05 + 0.1 * depth})`; cx.lineWidth = 0.6; cx.stroke(); }
+    const a = 0.12 + 0.8 * depth, sz = 0.5 + 1.5 * depth;
+    cx.fillStyle = rnd < 0.58 ? `rgba(245,196,81,${a})` : `rgba(120,170,255,${a})`;
+    cx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
+  }
+  // Tokens recientes como nodos brillantes sobre la esfera
+  constel.slice(0, 70).forEach((tk, i) => {
+    const lat = Math.sin(tk.ang * 7.3), r = Math.sqrt(1 - lat * lat), x = r * Math.cos(tk.ang * 3), z = r * Math.sin(tk.ang * 3);
+    const X = x * cos - z * sin, Z = x * sin + z * cos; if (Z < -0.2 && i > 5) return;
+    const px = cxm + X * Rr * 1.02, py = cym + lat * Rr * 1.02, col = ST_COL[tk.state] || '#4cc9ff', size = 2 + Math.min(5, Math.sqrt(tk.f?.buyVol || 0) * 1.6) + (i < 3 ? 1.5 : 0);
+    cx.beginPath(); cx.arc(px, py, size, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = i < 6 ? 16 : 6; cx.fill(); cx.shadowBlur = 0;
+    if (i < 4) { cx.fillStyle = '#dbe6ff'; cx.font = '700 11px "JetBrains Mono", monospace'; cx.fillText('$' + tk.symbol, px + size + 5, py + 4); }
   });
-  cx.beginPath(); cx.arc(cxm, cym, 6, 0, Math.PI * 2); cx.fillStyle = '#4cc9ff'; cx.shadowColor = '#4cc9ff'; cx.shadowBlur = 20; cx.fill(); cx.shadowBlur = 0;
+  cx.beginPath(); cx.arc(cxm, cym, 5, 0, Math.PI * 2); cx.fillStyle = '#ffffff'; cx.shadowColor = '#4cc9ff'; cx.shadowBlur = 24; cx.fill(); cx.shadowBlur = 0;
   requestAnimationFrame(drawConst);
 }
 requestAnimationFrame(drawConst);
@@ -760,7 +809,7 @@ function render() {
   const sumA = a => a.reduce((s, x) => s + x, 0), ratio = (a, b) => sumA(b) ? 100 * sumA(a) / sumA(b) : 0;
   const obs = [
     { t: 'LANZAMIENTOS', d: 'tokens nuevos / min', v: (sumA(L) / 30).toFixed(1), s: L, c: '#4cc9ff' },
-    { t: 'DINERO ENTRANDO', d: 'SOL comprados en sus primeros 20 s', v: sumA(I).toFixed(1), s: I, c: '#3ef08a' },
+    { t: 'DINERO ENTRANDO', d: 'SOL comprados hasta decidir', v: sumA(I).toFixed(1), s: I, c: '#3ef08a' },
     { t: 'TASA DE VETO', d: '% de tokens con algún veto', v: ratio(V, E).toFixed(0) + '%', s: V, c: '#ff4d6d' },
     { t: 'PRIMER BLOQUE', d: '% con >15% comprado al lanzar', v: ratio(B, E).toFixed(0) + '%', s: B, c: '#ffb547' },
     { t: 'CREADORES EN SERIE', d: '% de creadores con varios lanzamientos', v: ratio(C, E).toFixed(0) + '%', s: C, c: '#a78bfa' },
