@@ -1,0 +1,1 @@
+gramjs.js: build para navegador de GramJS (paquete npm `telegram` 2.26.22, licencia MIT, https://github.com/gram-js/gramjs), empaquetado con esbuild. Expone `window.GramJS = { TelegramClient, Api, StringSession, NewMessage }`.

@@ -45,6 +45,8 @@ button:disabled{opacity:.35;cursor:default}
 .r1{grid-template-columns:minmax(0,4fr) minmax(0,5fr) minmax(0,4fr)}
 .r2{grid-template-columns:minmax(0,3fr) minmax(0,5fr) minmax(0,4fr)}
 .r3{grid-template-columns:minmax(0,5fr) minmax(0,4fr) minmax(0,4fr)}
+.r4{grid-template-columns:minmax(0,4fr) minmax(0,8fr)}
+.tgf input{min-width:150px}
 .pn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;position:relative}
 .pn h2{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.06em;color:var(--soft);margin:0 0 10px;display:flex;justify-content:space-between;gap:8px}
 .pn h2 em{font-style:normal;color:var(--dim)}
@@ -145,7 +147,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 @media(prefers-reduced-motion:reduce),(hover:none){.pn{transform:none!important}}
 .toast{position:fixed;left:50%;top:84px;transform:translate(-50%,-20px);opacity:0;pointer-events:none;z-index:9;background:#4f8dff;color:#fff;font:700 14px Inter;padding:12px 18px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.5);transition:.25s;max-width:calc(100vw - 24px)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
-@media(max-width:1100px){.r1,.r2,.r3,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:1100px){.r1,.r2,.r3,.r4,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:560px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.settings label,.settings input,.settings select{width:100%;max-width:none}}
 @media(max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hlab span:nth-child(odd){visibility:hidden}.counters strong{font-size:15px}}
 </style>
@@ -283,8 +285,31 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
     <section class="pn">
       <h2>REGISTRO DE AGENTES <em>tail -f</em></h2>
       <div class="log" id="log"></div>
-      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span id="xChip">X · sin conectar</span><span>Telegram · falta api_id</span><span>IA · falta clave</span></div>
+      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span id="xChip">X · sin conectar</span><span id="tgChip">Telegram · sin conectar</span><span>IA · falta clave</span></div>
       <div class="sub" id="xTrends" style="margin-top:8px"></div>
+    </section>
+  </div>
+  <div class="row r4" id="tgRow">
+    <section class="pn">
+      <h2>TELEGRAM <em id="tgBadge">sin conectar</em></h2>
+      <div class="settings tgf" id="tgForm">
+        <label for="tgApiId">API ID<input id="tgApiId" inputmode="numeric" autocomplete="off"></label>
+        <label for="tgApiHash">API HASH<input id="tgApiHash" type="password" autocomplete="off"></label>
+        <label for="tgPhone">TELÉFONO (+34…)<input id="tgPhone" type="tel" autocomplete="off"></label>
+        <button class="go" id="tgGo">Conectar</button>
+      </div>
+      <div class="settings tgf" id="tgAsk" hidden><label for="tgAskIn" id="tgAskLbl">CÓDIGO<input id="tgAskIn" autocomplete="one-time-code"></label><button class="go" id="tgAskOk">Enviar</button></div>
+      <div id="tgOn" hidden><div style="font-weight:700;font-size:14px" id="tgWho"></div><div style="display:flex;gap:8px;margin-top:8px"><button id="tgRescan">Releer últimas 24 h</button><button id="tgOut">Cerrar sesión</button></div></div>
+      <div class="sub" id="tgErr" style="color:var(--r);margin-top:6px"></div>
+      <div class="kpis"><div>LLAMADAS<strong id="tgK1">0</strong></div><div>PUNTUADAS<strong id="tgK2">0</strong></div><div>ACIERTO<strong id="tgK3">–</strong></div><div>MEDIA/OP<strong id="tgK4">–</strong></div></div>
+      <div class="sub" id="tgNote" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px;color:var(--dim)">Solo lee: no escribe en ningún grupo. La sesión se guarda únicamente en este navegador; "Cerrar sesión" la borra y la cierra en Telegram.</div>
+    </section>
+    <section class="pn">
+      <h2>RANKING DE COMUNIDADES <em id="tgRankTxt">sin datos</em></h2>
+      <div class="scroll"><table><thead><tr><th>#</th><th>Comunidad</th><th>Llamadas</th><th>Acierto</th><th>Media/op</th><th>Llega a 2x</th><th>Primera en llamar</th><th>Mcap al llamar</th><th>Mín. fiable</th></tr></thead><tbody id="tgRank"><tr><td colspan="9" style="color:var(--soft)">Sin llamadas todavía.</td></tr></tbody></table></div>
+      <h2 style="margin-top:14px">ÚLTIMAS LLAMADAS <em>dirección completa seleccionable</em></h2>
+      <div class="scroll" id="tgCalls"><div class="sub">Sin llamadas todavía.</div></div>
     </section>
   </div>
   </div>
@@ -351,6 +376,8 @@ const FILTERS = [
   // Nuevos: información de X (solo si hay intermediario de X configurado)
   { id: 'xtrend', txt: 'nombre en tendencia en X', f: x => !!x.xTrend },
   { id: 'xbuzz', txt: 'mencionado en X por cuentas con 1.000+ seguidores', f: x => (x.xBig || 0) >= 1 },
+  // Nuevo: llamadas de comunidades de Telegram
+  { id: 'tgcall', txt: 'llamada en Telegram antes de entrar', f: x => (x.tgCalls || 0) >= 1 },
 ];
 const STRATS = [];
 for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
@@ -521,6 +548,7 @@ async function evaluate(mint) {
     setTimeout(() => evaluate(mint).catch(() => { t.state = 'skip'; tokens.delete(mint); }), CFG.recheckSec * 1000);
     return;
   }
+  f.tgCalls = t.tgCalls || 0;
   t.f = f; t.decAt = Date.now(); t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
   const H = data.hours[t.hour]; H.vol += buyVol; H.evald++; if (v.length) H.veto++;
   bump('evald'); bump('inflow', buyVol); bump('score', f.score); if (v.length) bump('veto'); if (f.slot0Pct > 0.15) bump('bundle'); if (t.creatorLaunches > 1) bump('serial');
@@ -992,8 +1020,10 @@ $('copy').onclick = async () => {
   setTimeout(() => $('copy').textContent = 'Copiar resumen CSV', 2000);
 };
 window.__arena = { data, STRATS, scoreOf, tokens: () => tokens.size, constel, cam };
+window.__snlab = { tokens, log, cfg: CFG, solEur: () => solEur };
 setInterval(render, 1000); render();
 }
 </script>
+<script src="tg.js" defer></script>
 </body>
 </html>
