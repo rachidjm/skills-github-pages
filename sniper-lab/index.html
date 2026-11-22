@@ -124,6 +124,25 @@ tr.ch td{background:var(--gBg)}
 .orbtip b{font:800 14px 'JetBrains Mono',ui-monospace,monospace}.orbtip .st{float:right;font:700 10px 'JetBrains Mono',ui-monospace,monospace;padding:2px 6px;border-radius:5px}
 .orbtip .kv2{display:grid;grid-template-columns:auto auto;gap:2px 10px;margin:8px 0 6px;font-family:'JetBrains Mono',ui-monospace,monospace}.orbtip .kv2 span{color:var(--soft)}.orbtip p{margin:0;color:var(--soft)}
 .orbhint{position:absolute;right:10px;top:6px;font:600 10px 'JetBrains Mono',ui-monospace,monospace;color:var(--dim);pointer-events:none}
+/* Relieve: paneles con foco de luz que sigue al ratón e inclinación 3D */
+.pn{transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease;transform:perspective(1100px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transform-style:preserve-3d;overflow:hidden}
+.pn::before{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;opacity:0;transition:opacity .3s;background:radial-gradient(420px circle at var(--mx,50%) var(--my,50%),rgba(79,141,255,.14),transparent 60%)}
+.pn:hover{border-color:#2c4170;box-shadow:0 18px 50px rgba(0,0,0,.45),0 0 0 1px rgba(79,141,255,.12),inset 0 1px 0 rgba(255,255,255,.04)}
+.pn:hover::before{opacity:1}
+.cards div,.split div,.kpis div,.ob,.src span{transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease,background .2s}
+.cards div:hover,.split div:hover{transform:translateY(-3px);border-color:#4f8dff;box-shadow:0 10px 26px rgba(79,141,255,.18);background:#11203a}
+.ob{cursor:default;border-radius:0 8px 8px 0;padding:4px 6px 4px 9px}.ob:hover,.ob.hl{background:rgba(255,255,255,.04);transform:translateX(4px);box-shadow:-3px 0 14px var(--oc,transparent)}
+.dc{transition:transform .2s ease,box-shadow .2s ease,background .2s;cursor:pointer}
+.dc:hover{transform:translateX(-4px) scale(1.015);background:#132140}
+.dc.entry:hover{box-shadow:0 0 0 1px var(--g),0 8px 26px rgba(62,240,138,.18)}.dc.veto:hover{box-shadow:0 0 0 1px var(--r),0 8px 26px rgba(255,77,109,.18)}.dc.skip:hover{box-shadow:0 0 0 1px var(--a),0 8px 26px rgba(255,181,71,.18)}
+tbody tr{transition:background .15s}tbody tr:hover td{background:rgba(79,141,255,.09)}tbody tr:hover td:first-child{box-shadow:inset 3px 0 0 #4f8dff}
+.tt{transition:background .15s,padding .15s}.tt:hover{background:rgba(79,141,255,.07);padding-left:6px}
+button{transition:transform .12s ease,box-shadow .2s ease,filter .2s}button:not(:disabled):hover{filter:brightness(1.12);box-shadow:0 0 0 1px rgba(255,255,255,.08),0 8px 24px rgba(79,141,255,.25)}button:not(:disabled):active{transform:scale(.96)}
+button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button.halt:not(:disabled):hover{box-shadow:0 8px 28px rgba(255,77,109,.3)}
+.hours div{transition:filter .15s,transform .15s;cursor:default}.hours div:hover{filter:brightness(1.6);transform:scaleY(1.04);transform-origin:bottom}
+.counters div{transition:transform .2s}.counters div:hover{transform:translateY(-2px)}.counters div:hover strong{color:#4f8dff}
+.eqtip{position:absolute;pointer-events:none;display:none;background:rgba(11,18,32,.96);border:1px solid #2a3c5e;border-radius:9px;padding:7px 10px;font:600 12px 'JetBrains Mono',ui-monospace,monospace;white-space:nowrap;z-index:3;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+@media(prefers-reduced-motion:reduce),(hover:none){.pn{transform:none!important}}
 .toast{position:fixed;left:50%;top:84px;transform:translate(-50%,-20px);opacity:0;pointer-events:none;z-index:9;background:#4f8dff;color:#fff;font:700 14px Inter;padding:12px 18px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.5);transition:.25s;max-width:calc(100vw - 24px)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 @media(max-width:1100px){.r1,.r2,.r3,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
@@ -183,7 +202,7 @@ tr.ch td{background:var(--gBg)}
   <div class="row r2b">
     <section class="pn">
       <h2>EVOLUCIÓN DEL SALDO <em id="eqTxt">línea discontinua = capital inicial</em></h2>
-      <div class="fig" style="min-height:260px"><svg id="eq"></svg></div>
+      <div class="fig" style="min-height:260px"><svg id="eq"></svg><div class="eqtip" id="eqTip"></div></div>
     </section>
     <section class="pn">
       <h2>REPARTO DEL DINERO <em>ahora mismo</em></h2>
@@ -479,7 +498,7 @@ async function evaluate(mint) {
   if (v.length) { data.totals.veto++; log('r', `VETO ${esc(t.symbol)} · ${esc(v[0])}`); tape('r', 'VETO', `$${t.symbol} · ${v[0]}`); }
   if (n) { data.totals.entry++; log('g', `ENTRY ${esc(t.symbol)} · ${n} estrategias · riesgo ${f.score}/100`); tape('g', 'ENTRY', `$${t.symbol} · ${n} estrategias`); }
   else if (!v.length) log('a', `SKIP ${esc(t.symbol)} · ${f.enough ? 'no pasa ningún filtro' : 'sin datos suficientes en ' + CFG.maxWaitSec + ' s'} · ${f.uniqueBuyers} compradores`);
-  stack.unshift({ symbol: t.symbol, state: t.state, vetoed: v.length > 0, score: f.uniqueBuyers < 3 ? '–' : f.score, n, why: `decidido a los ${age} s · ` + (v.length ? v.slice(0, 2).join(' · ') + (n ? ' · entran solo estrategias sin filtro de vetos' : '') : !f.enough ? `sin datos suficientes: ${f.uniqueBuyers} compradores y ${f.trades} operaciones en ${age} s` : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}`) });
+  stack.unshift({ tk: t, symbol: t.symbol, state: t.state, vetoed: v.length > 0, score: f.uniqueBuyers < 3 ? '–' : f.score, n, why: `decidido a los ${age} s · ` + (v.length ? v.slice(0, 2).join(' · ') + (n ? ' · entran solo estrategias sin filtro de vetos' : '') : !f.enough ? `sin datos suficientes: ${f.uniqueBuyers} compradores y ${f.trades} operaciones en ${age} s` : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}`) });
   stack.length = Math.min(stack.length, 40);
   t.why = stack[0].why; t.score = stack[0].score; t.n = n;
 }
@@ -629,6 +648,24 @@ function pfOnClose(t, id, raw, reason, now) {
   log(pl >= 0 ? 'g' : 'r', `VENTA ${esc(p.symbol)} · ${reason} · ${signed(pl)} (${pc(100 * pl / p.inv)})`); tape(pl >= 0 ? 'g' : 'r', 'VENTA', `$${p.symbol} ${signed(pl)}`);
   pfSave();
 }
+// ---- Toda la página responde al ratón ----
+const finePointer = matchMedia('(hover: hover) and (pointer: fine)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+let tiltEl = null;
+document.addEventListener('pointermove', e => {
+  const pn = e.target.closest?.('.pn');
+  if (tiltEl && tiltEl !== pn) { tiltEl.style.setProperty('--rx', '0deg'); tiltEl.style.setProperty('--ry', '0deg'); tiltEl = null; }
+  if (!pn) return;
+  const r = pn.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+  pn.style.setProperty('--mx', (px * 100).toFixed(1) + '%'); pn.style.setProperty('--my', (py * 100).toFixed(1) + '%');
+  if (finePointer && !(e.target.id === 'const' && cam.drag)) { const k = r.width > 900 ? 1 : 2.2; pn.style.setProperty('--rx', ((0.5 - py) * k).toFixed(2) + 'deg'); pn.style.setProperty('--ry', ((px - 0.5) * k).toFixed(2) + 'deg'); tiltEl = pn; }
+});
+$('obs').addEventListener('pointerover', e => { const o = e.target.closest('.ob'); hlIn = o ? Number(o.dataset.i) : -1; });
+$('obs').addEventListener('pointerleave', () => { hlIn = -1; });
+$('stack').addEventListener('pointerover', e => { const d = e.target.closest('.dc'); hlOut = d ? Number(d.dataset.i) : -1; hlTok = d ? stack[hlOut]?.tk || null : null; });
+$('stack').addEventListener('pointerleave', () => { hlOut = -1; hlTok = null; });
+$('stack').addEventListener('click', e => { const d = e.target.closest('.dc'); if (d) { pinned = stack[Number(d.dataset.i)]?.tk || null; } });
+// Cifras grandes que se animan al cambiar
+function tween(el, to, fmt) { const from = el._v ?? to; el._v = to; if (from === to) { el.textContent = fmt(to); return; } const t0 = performance.now(); const step = n => { const k = Math.min(1, (n - t0) / 650), e = 1 - (1 - k) ** 3; el.textContent = fmt(from + (to - from) * e); if (k < 1) requestAnimationFrame(step); }; requestAnimationFrame(step); }
 function toast(msg) { const el = $('toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 4500); }
 // Ajustes
 const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat');
@@ -660,6 +697,16 @@ function drawEq() {
     + `<circle cx="${x(pts.length - 1)}" cy="${y(pts.at(-1))}" r="5" fill="${col}"/>`;
 }
 const eqObs = new ResizeObserver(drawEq); eqObs.observe($('eq'));
+$('eq').addEventListener('pointermove', e => {
+  const s = $('eq'), r = s.getBoundingClientRect(), W = r.width, H = r.height, pts = [...pf.curve.map(c => c.eq), pfEquity()], n = pts.length;
+  const i = Math.max(0, Math.min(n - 1, Math.round((e.clientX - r.left - 70) / Math.max(1, W - 92) * (n - 1)))), v = pts[i], d = v - pf.start;
+  const tip = $('eqTip'), c = pf.closed[pf.closed.length - i];
+  tip.innerHTML = `<b style="color:${d >= 0 ? 'var(--g)' : 'var(--r)'}">${money(v)}</b> · ${signed(d)}${i === n - 1 ? '<br><span style="color:var(--soft)">ahora mismo</span>' : c ? `<br><span style="color:var(--soft)">tras $${esc(c.symbol)} (${signed(c.got - c.inv)})</span>` : ''}`;
+  tip.style.display = 'block'; tip.style.left = Math.min(W - tip.offsetWidth - 4, e.clientX - r.left + 14) + 'px'; tip.style.top = Math.max(4, e.clientY - r.top - 40) + 'px';
+  let cross = s.querySelector('#eqx'); if (!cross) { cross = document.createElementNS('http://www.w3.org/2000/svg', 'line'); cross.id = 'eqx'; cross.setAttribute('stroke', '#4f8dff'); cross.setAttribute('stroke-dasharray', '3 3'); s.appendChild(cross); }
+  const x = 70 + (W - 92) * i / Math.max(1, n - 1); cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.setAttribute('y1', 10); cross.setAttribute('y2', H - 10);
+});
+$('eq').addEventListener('pointerleave', () => { $('eqTip').style.display = 'none'; $('eq').querySelector('#eqx')?.remove(); });
 function drawDonut(free, inv, gain) {
   const s = $('donut'), W = s.clientWidth, H = s.clientHeight; if (!W || !H) return;
   const tot = Math.max(1e-9, free + inv + gain), R = Math.min(W, H) / 2 - 10, r = R * 0.68, cx = W / 2, cy = H / 2;
@@ -673,7 +720,7 @@ let lastClosedLen = -1;
 function renderBot() {
   const { inv, val } = pfOpenValue(), eq = pf.cash + val, pl = eq - pf.start, plPct = 100 * pl / pf.start;
   const real = pf.closed.reduce((s, c) => s + c.got - c.inv, 0), openPl = val - inv, col = v => v > 0.004 ? 'var(--g)' : v < -0.004 ? 'var(--r)' : 'var(--ink)';
-  $('pfBal').textContent = money(eq); $('pfBal').style.color = col(pl);
+  tween($('pfBal'), eq, money); $('pfBal').style.color = col(pl);
   $('pfPl').textContent = `${pl >= 0 ? '▲' : '▼'} ${signed(pl)} (${pc(plPct, 2)}) desde ${money(pf.start)}`; $('pfPl').style.color = col(pl);
   $('pfSince').textContent = `Empezó el ${madrid(pf.startedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · invierte ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación · ${pf.strategy === 'auto' ? 'estrategia automática → ' : ''}${STRAT.get(pfTarget())?.name || ''}`;
   $('cStart').textContent = money(pf.start);
@@ -731,11 +778,17 @@ const SPH = Array.from({ length: 1600 }, (_, i) => { const y = 1 - 2 * (i + 0.5)
 const IN_COLS = ['#4cc9ff', '#3ef08a', '#ff4d6d', '#ffb547', '#a78bfa', '#5d94e8'];
 const ST_COL = { entry: '#3ef08a', veto: '#ff4d6d', skip: '#ffb547', eval: '#4cc9ff' };
 const bez = (p0, p1, p2, p3, u) => { const v = 1 - u; return [v * v * v * p0[0] + 3 * v * v * u * p1[0] + 3 * v * u * u * p2[0] + u * u * u * p3[0], v * v * v * p0[1] + 3 * v * v * u * p1[1] + 3 * v * u * u * p2[1] + u * u * u * p3[1]]; };
-function curve(p0, p1, p2, p3, col, phase, ts, still) {
-  cx.beginPath(); cx.moveTo(...p0); cx.bezierCurveTo(...p1, ...p2, ...p3); cx.strokeStyle = col + '88'; cx.lineWidth = 1.4; cx.stroke();
+function curve(p0, p1, p2, p3, col, phase, ts, still, hl = false, dim = false) {
+  const path = () => { cx.beginPath(); cx.moveTo(...p0); cx.bezierCurveTo(...p1, ...p2, ...p3); };
+  const g = cx.createLinearGradient(p0[0], p0[1], p3[0], p3[1]); g.addColorStop(0, col + (dim ? '22' : '55')); g.addColorStop(1, col + (dim ? '44' : 'ee'));
+  path(); cx.strokeStyle = col + (hl ? '40' : dim ? '08' : '1c'); cx.lineWidth = hl ? 12 : 7; cx.stroke();                  // halo (relieve)
+  path(); cx.strokeStyle = g; cx.lineWidth = hl ? 3 : 1.8; cx.shadowColor = col; cx.shadowBlur = hl ? 18 : dim ? 0 : 8; cx.stroke(); cx.shadowBlur = 0;
+  path(); cx.strokeStyle = 'rgba(255,255,255,' + (hl ? .5 : .12) + ')'; cx.lineWidth = .6; cx.stroke();                     // brillo superior
   if (still) return;
-  for (const off of [0, 0.5]) { const [x, y] = bez(p0, p1, p2, p3, (ts / 2600 + phase + off) % 1); cx.beginPath(); cx.arc(x, y, 2.6, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = 12; cx.fill(); cx.shadowBlur = 0; }
+  const n = hl ? 4 : 2;
+  for (let q = 0; q < n; q++) { const [x, y] = bez(p0, p1, p2, p3, (ts / (hl ? 1500 : 2600) + phase + q / n) % 1); cx.beginPath(); cx.arc(x, y, hl ? 3.6 : 2.6, 0, Math.PI * 2); cx.fillStyle = '#fff'; cx.shadowColor = col; cx.shadowBlur = hl ? 22 : 12; cx.fill(); cx.shadowBlur = 0; }
 }
+let hlIn = -1, hlOut = -1, hlTok = null;
 // Estado de la cámara: se gira arrastrando, con inercia; la rueda acerca y aleja
 const cam = { yaw: 0, pitch: -0.25, vy: 0.0006, vp: 0, zoom: 1, drag: false, lx: 0, ly: 0, idle: 0 };
 let hover = null, pinned = null, nodes = [];
@@ -790,8 +843,8 @@ function drawConst(ts) {
   const glow = cx.createRadialGradient(cxm, cym, 0, cxm, cym, Rr * 1.3);
   glow.addColorStop(0, 'rgba(93,148,232,.30)'); glow.addColorStop(.55, 'rgba(93,148,232,.07)'); glow.addColorStop(1, 'rgba(7,11,20,0)');
   cx.fillStyle = glow; cx.fillRect(0, 0, W, H);
-  IN_COLS.forEach((c, k) => { const y0 = H * (0.1 + k * 0.16), y1 = cym + (k - 2.5) * Rr * 0.16; curve([0, y0], [W * 0.16, y0], [cxm - Rr * 1.35, y1], [cxm - Rr * 0.92, y1], c, k * 0.17, t, still); });
-  stack.slice(0, 8).forEach((d, k) => { const y0 = cym + (k - 3.5) * Rr * 0.12, y1 = H * (0.08 + k * 0.12); curve([cxm + Rr * 0.92, y0], [cxm + Rr * 1.35, y0], [W * 0.84, y1], [W, y1], ST_COL[d.state] || '#4cc9ff', k * 0.13, t, still); });
+  IN_COLS.forEach((c, k) => { const y0 = H * (0.1 + k * 0.16), y1 = cym + (k - 2.5) * Rr * 0.16; curve([0, y0], [W * 0.16, y0], [cxm - Rr * 1.35, y1], [cxm - Rr * 0.92, y1], c, k * 0.17, t, still, hlIn === k, hlIn >= 0 && hlIn !== k); });
+  stack.slice(0, 8).forEach((d, k) => { const y0 = cym + (k - 3.5) * Rr * 0.12, y1 = H * (0.08 + k * 0.12); curve([cxm + Rr * 0.92, y0], [cxm + Rr * 1.35, y0], [W * 0.84, y1], [W, y1], ST_COL[d.state] || '#4cc9ff', k * 0.13, t, still, hlOut === k, hlOut >= 0 && hlOut !== k); });
   // Partículas (respiran ligeramente)
   for (const [x, y, z, rnd] of SPH) {
     const br = 1 + (still ? 0 : 0.025 * Math.sin(t / 700 + rnd * 40));
@@ -807,7 +860,7 @@ function drawConst(ts) {
   constel.slice(0, 80).forEach((tk, i) => {
     const lat = Math.sin(tk.ang * 7.3), r = Math.sqrt(1 - lat * lat), grow = Math.min(1, (now - (tk.born || 0)) / 1200), e = 1 - (1 - grow) ** 3;
     const [px, py, Z, k] = proj(r * Math.cos(tk.ang * 3) * 1.04 * e, lat * 1.04 * e, r * Math.sin(tk.ang * 3) * 1.04 * e, cxm, cym, Rr);
-    const front = Z > -0.15, col = ST_COL[tk.state] || '#4cc9ff', sel = tk === hover || tk === pinned;
+    const front = Z > -0.15, col = ST_COL[tk.state] || '#4cc9ff', sel = tk === hover || tk === pinned || tk === hlTok;
     const size = (2 + Math.min(5, Math.sqrt(tk.f?.buyVol || 0) * 1.6) + (sel ? 3 : 0)) * k;
     cx.globalAlpha = front ? 1 : 0.35;
     cx.beginPath(); cx.arc(px, py, size, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = sel ? 26 : i < 6 ? 16 : 6; cx.fill(); cx.shadowBlur = 0;
@@ -874,10 +927,10 @@ function render() {
     { t: 'CREADORES EN SERIE', d: '% de creadores con varios lanzamientos', v: ratio(C, E).toFixed(0) + '%', s: C, c: '#a78bfa' },
     { t: 'RIESGO MEDIO', d: 'puntuación 0–100 (100 = limpio)', v: sumA(E) ? (sumA(S) / sumA(E)).toFixed(0) : '–', s: S.map((x, i) => E[i] ? x / E[i] : 0), c: '#4cc9ff' },
   ];
-  $('obs').innerHTML = obs.map(o => `<div class="ob" style="border-left-color:${o.c}"><span class="t">${o.t}</span><span class="v" style="color:${o.c}">${o.v}</span><span class="d">${o.d}</span>${spark(o.s, o.c)}</div>`).join('');
+  $('obs').innerHTML = obs.map((o, i) => `<div class="ob${hlIn === i ? ' hl' : ''}" data-i="${i}" style="border-left-color:${o.c};--oc:${o.c}55"><span class="t">${o.t}</span><span class="v" style="color:${o.c}">${o.v}</span><span class="d">${o.d}</span>${spark(o.s, o.c)}</div>`).join('');
   $('constTxt').textContent = `${constel.length} tokens · ${tokens.size} en seguimiento`;
   // Pila de decisiones
-  if (stack.length) $('stack').innerHTML = stack.map(d => `<div class="dc ${d.state}"><span class="lab">${d.state === 'entry' ? (d.vetoed ? 'ENTRADA · CON VETO' : 'ENTRADA') : d.state === 'veto' ? 'VETO' : 'SIN ENTRADA'}</span><span class="nm">$${esc(d.symbol)}${d.n ? ` · ${d.n} estrategias` : ''}</span><span class="sc">${d.score}</span><span class="why">${esc(d.why)}</span></div>`).join('');
+  if (stack.length) $('stack').innerHTML = stack.map((d, i) => `<div class="dc ${d.state}" data-i="${i}"><span class="lab">${d.state === 'entry' ? (d.vetoed ? 'ENTRADA · CON VETO' : 'ENTRADA') : d.state === 'veto' ? 'VETO' : 'SIN ENTRADA'}</span><span class="nm">$${esc(d.symbol)}${d.n ? ` · ${d.n} estrategias` : ''}</span><span class="sc">${d.score}</span><span class="why">${esc(d.why)}</span></div>`).join('');
   // Aspirantes
   const sc = STRATS.map(s => scoreOf(s.id)).filter(Boolean).sort((a, b) => (b.n >= 10) - (a.n >= 10) || b.lb - a.lb).slice(0, 15);
   $('nStrat').textContent = `${STRATS.length} estrategias · top 15`;
