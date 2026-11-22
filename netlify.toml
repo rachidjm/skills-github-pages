@@ -1,0 +1,9 @@
+# Netlify: sirve el bot (carpeta sniper-lab) y el intermediario de X (la clave nunca llega al navegador)
+[build]
+  publish = "sniper-lab"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/x"
+  to = "/.netlify/functions/x"
+  status = 200

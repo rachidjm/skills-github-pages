@@ -283,7 +283,8 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
     <section class="pn">
       <h2>REGISTRO DE AGENTES <em>tail -f</em></h2>
       <div class="log" id="log"></div>
-      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span>X · falta clave</span><span>Telegram · falta api_id</span><span>IA · falta clave</span></div>
+      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span id="xChip">X · sin conectar</span><span>Telegram · falta api_id</span><span>IA · falta clave</span></div>
+      <div class="sub" id="xTrends" style="margin-top:8px"></div>
     </section>
   </div>
   </div>
@@ -347,6 +348,9 @@ const FILTERS = [
   { id: 'clean', txt: 'sin vetos de riesgo', f: x => !x.vetoes.length },
   { id: 'score60', txt: 'riesgo ≥60/100', f: x => x.score >= 60 },
   { id: 'clean_accel', txt: 'sin vetos y acelerando', f: x => !x.vetoes.length && x.accel },
+  // Nuevos: información de X (solo si hay intermediario de X configurado)
+  { id: 'xtrend', txt: 'nombre en tendencia en X', f: x => !!x.xTrend },
+  { id: 'xbuzz', txt: 'mencionado en X por cuentas con 1.000+ seguidores', f: x => (x.xBig || 0) >= 1 },
 ];
 const STRATS = [];
 for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
@@ -362,6 +366,34 @@ data.hours = Array.from({ length: 24 }, (_, i) => ({ tokens: 0, x2: 0, rug: 0, v
 for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
 setInterval(save, 15000);
+
+// ===================== Fuente 3: X (tendencias), a través del intermediario de Netlify =====================
+const X_URL = (() => { try { const o = localStorage.getItem('snlab_xurl'); if (o) return o; } catch {} return /netlify\.app$/.test(location.hostname) ? '/api/x' : null; })();
+const STOP = new Set('the and for you this that with are was have just your from they will what when then them been more like here there their about would could into than only some time make made over very also back after first even most need know want come good much does http https www com pump fun pumpfun memecoin memecoins meme coin coins solana sol crypto token tokens launch launched new now today get got buy sell price chart dev devs moon gem que los las por para con una del como pero más esta este'.split(' '));
+const xTrend = new Map();   // palabra → { n, first, last }
+let xState = { ok: null, used: 0, cap: 0, err: '', lastAt: 0 };
+function xWords(text) { return [...new Set((text.toLowerCase().match(/\$?[a-z][a-z0-9]{2,19}/g) || []).map(w => w.replace(/^\$/, '')).filter(w => !STOP.has(w)))]; }
+async function xFetch(params) { const r = await fetch(X_URL + '?' + new URLSearchParams(params)); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); xState.used = d.used ?? xState.used; xState.cap = d.cap ?? xState.cap; return d; }
+async function xTrends() {
+  if (!X_URL || !running) return;
+  try {
+    const d = await xFetch({ mode: 'trend' }), now = Date.now();
+    for (const p of d.posts || []) for (const w of xWords(p.text)) { const e = xTrend.get(w) || { n: 0, first: now, last: now }; e.n += 1 + Math.min(5, (p.likes || 0) / 20); e.last = now; xTrend.set(w, e); }
+    for (const [w, e] of xTrend) if (now - e.last > 3 * 3600e3) xTrend.delete(w);
+    xState.ok = true; xState.err = ''; xState.lastAt = now;
+    if (!d.cached) log('c', `X · ${(d.posts || []).length} posts leídos · tendencias: ${topTrends(5).map(([w]) => w).join(', ')}`);
+  } catch (e) { xState.ok = false; xState.err = e.message; log('a', `X · ${esc(e.message)}`); }
+}
+const topTrends = n => [...xTrend.entries()].filter(([, e]) => e.n >= 2).sort((a, b) => b[1].n - a[1].n).slice(0, n);
+setInterval(xTrends, 10 * 60e3); setTimeout(xTrends, 5000);
+// ¿El nombre o símbolo del token coincide con algo que se mueve en X ahora?
+function xTrendMatch(t) { const hot = new Map(topTrends(60)); for (const w of xWords((t.name || '') + ' ' + t.symbol)) if (hot.has(w)) return { w, ageMin: Math.round((Date.now() - hot.get(w).first) / 60000) }; return null; }
+async function xCheckToken(t) {
+  if (!X_URL || !t.f) return;
+  try { const d = await xFetch({ mode: 'token', sym: t.symbol, mint: t.mint }); const ps = d.posts || []; t.f.xMentions = ps.length; t.f.xBig = ps.filter(p => (p.followers || 0) >= 1000).length; t.f.xChecked = true;
+    if (ps.length) log('c', `X · $${esc(t.symbol)} mencionado ${ps.length} veces${t.f.xBig ? ` (${t.f.xBig} por cuentas con 1.000+ seguidores)` : ''}`);
+  } catch (e) { xState.err = e.message; }
+}
 
 // ===================== Registro, cinta y observables =====================
 const logLines = [], tapeItems = [], stack = [], constel = [];
@@ -391,7 +423,7 @@ function onCreate(e) {
   if (e.pool !== 'pump' || !e.bondingCurveKey || tokens.has(e.mint)) return;
   seen++; data.totals.seen++; bump('launches');
   const h = madridHour(now); data.hours[h].tokens++;
-  const t = { mint: e.mint, symbol: String(e.symbol || '?').slice(0, 12), creator: e.traderPublicKey, bc: e.bondingCurveKey, createdAt: now, hour: h,
+  const t = { mint: e.mint, name: String(e.name || '').slice(0, 40), symbol: String(e.symbol || '?').slice(0, 12), creator: e.traderPublicKey, bc: e.bondingCurveKey, createdAt: now, hour: h,
     launch: e.marketCapSol, devBuy: Number(e.solAmount) || 0, devTokens: Number(e.initialBuy) || 0, mayhem: Boolean(e.is_mayhem_mode), phase: 'window', mcap: e.marketCapSol, lastChange: now,
     copies: names.get(nm).length, creatorLaunches: (creators.get(e.traderPublicKey) || []).length, pos: new Map(), decided: new Set(), state: 'eval', ang: Math.random() * Math.PI * 2, born: performance.now() };
   tokens.set(e.mint, t); constel.unshift(t); constel.length = Math.min(constel.length, 160);
@@ -480,6 +512,7 @@ async function evaluate(mint) {
   if (t.creatorLaunches >= 3) v.push(`creador en serie: ${t.creatorLaunches} lanzamientos en 1 h`);
   if (impact >= 0.5) v.push(`una wallet puede hundirlo un ${Math.round(impact * 100)}%`);
   f.vetoes = v;
+  const xm = xTrendMatch(t); f.xTrend = xm ? xm.w : null; f.xTrendAge = xm ? xm.ageMin : null;
   // ¿Hay información suficiente para decidir? Si no, espera y vuelve a mirar (máximo 2 minutos)
   const age = Math.round((Date.now() - t.createdAt) / 1000);
   f.enough = f.uniqueBuyers >= CFG.minBuyers && trades.length >= CFG.minTrades; f.trades = trades.length; f.decSec = age;
@@ -491,6 +524,7 @@ async function evaluate(mint) {
   t.f = f; t.decAt = Date.now(); t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
   const H = data.hours[t.hour]; H.vol += buyVol; H.evald++; if (v.length) H.veto++;
   bump('evald'); bump('inflow', buyVol); bump('score', f.score); if (v.length) bump('veto'); if (f.slot0Pct > 0.15) bump('bundle'); if (t.creatorLaunches > 1) bump('serial');
+  if (f.enough && !v.length) xCheckToken(t);   // solo los candidatos limpios gastan búsquedas en X (las estrategias con confirmación lo usan 1 min después)
   tryEntries(t, Date.now());
   { const bs = STRAT.get(pfTarget()); if (bs) { botWhy.seen++; if (!f.enough) botWhy.data++; else if (!bs.filter.f(f, t)) (v.length ? botWhy.veto++ : botWhy.filter++); else botWhy.ok++; } }
   const n = t.pos.size;
@@ -937,6 +971,10 @@ function render() {
   if (sc.length) $('table').innerHTML = sc.map(x => `<tr class="${data.champ?.id === x.id ? 'ch' : ''}"><td>${esc(STRAT.get(x.id).name)}</td><td>${data.stats[x.id].n}</td><td>${Math.round(x.wr)}%</td><td style="color:${x.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.mean / 100)}</td><td style="color:${x.lb >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.lb / 100)}</td><td>${eur(data.stats[x.id].sum / 100)}</td></tr>`).join('');
   // Cinta de operaciones
   if (data.last.length) $('trades').innerHTML = data.last.map(o => `<div class="tt"><span class="s" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${o.net > 0 ? 'ACIERTO' : 'FALLO'}</span><span><b>$${esc(o.symbol)}</b> · ${o.reason}</span><span class="n" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${pc(o.net)}</span><span class="w">${esc(STRAT.get(o.id)?.name || o.id)} · ${madrid(o.ts, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('');
+  const xc = $('xChip');
+  if (!X_URL) { xc.textContent = 'X · sin conectar (requiere Netlify)'; xc.className = ''; }
+  else { xc.textContent = xState.ok === false ? 'X · error: ' + xState.err : xState.ok ? `X · activo · ${xState.used}/${xState.cap} posts hoy` : 'X · conectando…'; xc.className = xState.ok ? 'on' : ''; }
+  const tt = topTrends(10); $('xTrends').textContent = tt.length ? 'Tendencias en X ahora: ' + tt.map(([w]) => w).join(' · ') : '';
   renderBot();
   $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY';
   const tp = tapeItems.join(' &nbsp;·&nbsp; ');
