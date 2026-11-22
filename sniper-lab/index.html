@@ -119,6 +119,11 @@ tr.ch td{background:var(--gBg)}
 #closedRows td:nth-child(2),#openRows td:first-child{text-align:left}
 .big-pl{font:800 15px 'JetBrains Mono',ui-monospace,monospace}
 .r2b{grid-template-columns:minmax(0,8fr) minmax(0,4fr)}
+#const{cursor:grab;touch-action:none}#const.drag{cursor:grabbing}
+.orbtip{position:absolute;display:none;pointer-events:none;z-index:3;min-width:220px;max-width:280px;background:rgba(11,18,32,.95);border:1px solid #2a3c5e;border-radius:10px;padding:10px 12px;font-size:12px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.orbtip b{font:800 14px 'JetBrains Mono',ui-monospace,monospace}.orbtip .st{float:right;font:700 10px 'JetBrains Mono',ui-monospace,monospace;padding:2px 6px;border-radius:5px}
+.orbtip .kv2{display:grid;grid-template-columns:auto auto;gap:2px 10px;margin:8px 0 6px;font-family:'JetBrains Mono',ui-monospace,monospace}.orbtip .kv2 span{color:var(--soft)}.orbtip p{margin:0;color:var(--soft)}
+.orbhint{position:absolute;right:10px;top:6px;font:600 10px 'JetBrains Mono',ui-monospace,monospace;color:var(--dim);pointer-events:none}
 .toast{position:fixed;left:50%;top:84px;transform:translate(-50%,-20px);opacity:0;pointer-events:none;z-index:9;background:#4f8dff;color:#fff;font:700 14px Inter;padding:12px 18px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.5);transition:.25s;max-width:calc(100vw - 24px)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 @media(max-width:1100px){.r1,.r2,.r3,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
@@ -238,7 +243,7 @@ tr.ch td{background:var(--gBg)}
     </section>
     <section class="pn">
       <h2>MOTOR DE DECISIÓN <em id="constTxt">0 tokens</em></h2>
-      <div class="fig" style="min-height:430px"><canvas id="const"></canvas></div>
+      <div class="fig" style="min-height:460px"><canvas id="const" aria-label="Esfera 3D de decisiones: arrastra para girar, rueda para acercar, clic en un token para ver su ficha"></canvas><div class="orbtip" id="orbTip"></div><div class="orbhint">arrastra para girar · rueda para acercar · clic en un token</div></div>
       <div class="legend"><span>señales → esfera → decisiones</span><span><b style="background:var(--g)"></b>entra</span><span><b style="background:var(--r)"></b>vetado</span><span><b style="background:var(--a)"></b>sin entrada</span><span><b style="background:var(--c)"></b>evaluando</span></div>
     </section>
     <section class="pn">
@@ -369,7 +374,7 @@ function onCreate(e) {
   const h = madridHour(now); data.hours[h].tokens++;
   const t = { mint: e.mint, symbol: String(e.symbol || '?').slice(0, 12), creator: e.traderPublicKey, bc: e.bondingCurveKey, createdAt: now, hour: h,
     launch: e.marketCapSol, devBuy: Number(e.solAmount) || 0, devTokens: Number(e.initialBuy) || 0, mayhem: Boolean(e.is_mayhem_mode), phase: 'window', mcap: e.marketCapSol, lastChange: now,
-    copies: names.get(nm).length, creatorLaunches: (creators.get(e.traderPublicKey) || []).length, pos: new Map(), decided: new Set(), state: 'eval', ang: Math.random() * Math.PI * 2 };
+    copies: names.get(nm).length, creatorLaunches: (creators.get(e.traderPublicKey) || []).length, pos: new Map(), decided: new Set(), state: 'eval', ang: Math.random() * Math.PI * 2, born: performance.now() };
   tokens.set(e.mint, t); constel.unshift(t); constel.length = Math.min(constel.length, 160);
   if (t.creatorLaunches > 2) log('a', `NEW ${esc(t.symbol)} · el creador lleva ${t.creatorLaunches} lanzamientos en 1 h`);
   else log('c', `NEW ${esc(t.symbol)} · ${t.mayhem ? 'modo mayhem · ' : ''}creador compra ${t.devBuy.toFixed(2)} SOL`);
@@ -475,6 +480,7 @@ async function evaluate(mint) {
   else if (!v.length) log('a', `SKIP ${esc(t.symbol)} · ${f.enough ? 'no pasa ningún filtro' : 'sin datos suficientes en ' + CFG.maxWaitSec + ' s'} · ${f.uniqueBuyers} compradores`);
   stack.unshift({ symbol: t.symbol, state: t.state, vetoed: v.length > 0, score: f.uniqueBuyers < 3 ? '–' : f.score, n, why: `decidido a los ${age} s · ` + (v.length ? v.slice(0, 2).join(' · ') + (n ? ' · entran solo estrategias sin filtro de vetos' : '') : !f.enough ? `sin datos suficientes: ${f.uniqueBuyers} compradores y ${f.trades} operaciones en ${age} s` : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}`) });
   stack.length = Math.min(stack.length, 40);
+  t.why = stack[0].why; t.score = stack[0].score; t.n = n;
 }
 
 // ===================== Entradas y salidas de todas las estrategias =====================
@@ -728,37 +734,88 @@ function curve(p0, p1, p2, p3, col, phase, ts, still) {
   if (still) return;
   for (const off of [0, 0.5]) { const [x, y] = bez(p0, p1, p2, p3, (ts / 2600 + phase + off) % 1); cx.beginPath(); cx.arc(x, y, 2.6, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = 12; cx.fill(); cx.shadowBlur = 0; }
 }
+// Estado de la cámara: se gira arrastrando, con inercia; la rueda acerca y aleja
+const cam = { yaw: 0, pitch: -0.25, vy: 0.0006, vp: 0, zoom: 1, drag: false, lx: 0, ly: 0, idle: 0 };
+let hover = null, pinned = null, nodes = [];
+cv.addEventListener('pointerdown', e => { cam.drag = true; cam.lx = e.clientX; cam.ly = e.clientY; cam.moved = 0; cv.setPointerCapture(e.pointerId); cv.classList.add('drag'); });
+cv.addEventListener('pointermove', e => {
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  if (cam.drag) {
+    const dx = e.clientX - cam.lx, dy = e.clientY - cam.ly; cam.lx = e.clientX; cam.ly = e.clientY; cam.moved += Math.abs(dx) + Math.abs(dy);
+    cam.yaw += dx * 0.006; cam.pitch = Math.max(-1.35, Math.min(1.35, cam.pitch + dy * 0.006)); cam.vy = dx * 0.006; cam.vp = dy * 0.006; cam.idle = performance.now();
+  }
+  hover = null; let best = 14;
+  for (const n of nodes) { const d = Math.hypot(n.x - mx, n.y - my); if (d < best) { best = d; hover = n.tk; } }
+  cv.style.cursor = hover && !cam.drag ? 'pointer' : '';
+  showTip(mx, my);
+});
+const endDrag = e => { if (!cam.drag) return; cam.drag = false; cv.classList.remove('drag'); if (cam.moved < 4) pinned = hover || null; };
+cv.addEventListener('pointerup', endDrag); cv.addEventListener('pointercancel', endDrag);
+cv.addEventListener('pointerleave', () => { hover = null; if (!pinned) $('orbTip').style.display = 'none'; });
+cv.addEventListener('wheel', e => { e.preventDefault(); cam.zoom = Math.max(0.6, Math.min(2.2, cam.zoom * (e.deltaY < 0 ? 1.08 : 0.93))); }, { passive: false });
+function showTip(mx, my) {
+  const tk = hover || pinned, tip = $('orbTip');
+  if (!tk) { tip.style.display = 'none'; return; }
+  const f = tk.f || {}, st = { entry: ['ENTRA', 'var(--gBg)', 'var(--g)'], veto: ['VETO', 'var(--rBg)', 'var(--r)'], skip: ['SIN ENTRADA', 'var(--aBg)', 'var(--a)'], eval: ['EVALUANDO', 'rgba(76,201,255,.12)', 'var(--c)'] }[tk.state] || ['…', '', ''];
+  const live = tk.m20 ? ` · ahora ${(tk.mcap / tk.m20).toFixed(2).replace('.', ',')}x` : '';
+  tip.innerHTML = `<span class="st" style="background:${st[1]};color:${st[2]}">${st[0]}</span><b>$${esc(tk.symbol)}</b>
+    <div class="kv2"><span>riesgo</span><strong>${tk.score ?? '–'}${tk.score != null && tk.score !== '–' ? '/100' : ''}</strong><span>compradores</span><strong>${f.uniqueBuyers ?? '–'}</strong><span>SOL comprados</span><strong>${f.buyVol != null ? Number(f.buyVol).toFixed(2).replace('.', ',') : '–'}</strong><span>estrategias dentro</span><strong>${tk.pos ? tk.pos.size : 0}</strong><span>market cap</span><strong>${tk.mcap ? tk.mcap.toFixed(0) + ' SOL' : '–'}${live}</strong></div>
+    <p>${esc(tk.why || 'esperando datos suficientes para decidir…')}</p>`;
+  tip.style.display = 'block';
+  const W = cv.clientWidth, H = cv.clientHeight, tw = tip.offsetWidth, th = tip.offsetHeight;
+  if (mx != null) { tip.style.left = Math.min(W - tw - 6, mx + 16) + 'px'; tip.style.top = Math.min(H - th - 6, Math.max(6, my - th / 2)) + 'px'; }
+}
+// Gira un punto de la esfera según la cámara y lo proyecta con perspectiva
+function proj(x, y, z, cxm, cym, Rr) {
+  const cy_ = Math.cos(cam.yaw), sy = Math.sin(cam.yaw), cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const X = x * cy_ - z * sy, Z1 = x * sy + z * cy_, Y = y * cp - Z1 * sp, Z = y * sp + Z1 * cp;
+  const k = 2.6 / (2.6 - Z * 0.9);
+  return [cxm + X * Rr * k, cym + Y * Rr * k, Z, k];
+}
 function drawConst(ts) {
   const W = cv.clientWidth, H = cv.clientHeight, dpr = devicePixelRatio || 1;
   if (W < 40 || H < 40) { requestAnimationFrame(drawConst); return; }   // pestaña oculta
   if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
   cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, W, H);
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches, t = still ? 0 : ts;
-  const cxm = W / 2, cym = H / 2, Rr = Math.min(W * 0.3, H * 0.42), rot = t / 14000, cos = Math.cos(rot), sin = Math.sin(rot);
-  const glow = cx.createRadialGradient(cxm, cym, 0, cxm, cym, Rr * 1.25);
-  glow.addColorStop(0, 'rgba(93,148,232,.28)'); glow.addColorStop(.55, 'rgba(93,148,232,.07)'); glow.addColorStop(1, 'rgba(7,11,20,0)');
+  // Inercia y giro automático cuando nadie la toca
+  if (!cam.drag) {
+    cam.yaw += cam.vy; cam.pitch = Math.max(-1.35, Math.min(1.35, cam.pitch + cam.vp));
+    cam.vy *= 0.96; cam.vp *= 0.92;
+    if (!still && performance.now() - cam.idle > 2500) cam.vy += (0.0016 - cam.vy) * 0.02;
+  }
+  const cxm = W / 2, cym = H / 2, Rr = Math.min(W * 0.28, H * 0.38) * cam.zoom;
+  const glow = cx.createRadialGradient(cxm, cym, 0, cxm, cym, Rr * 1.3);
+  glow.addColorStop(0, 'rgba(93,148,232,.30)'); glow.addColorStop(.55, 'rgba(93,148,232,.07)'); glow.addColorStop(1, 'rgba(7,11,20,0)');
   cx.fillStyle = glow; cx.fillRect(0, 0, W, H);
-  // Señales que entran (izquierda)
   IN_COLS.forEach((c, k) => { const y0 = H * (0.1 + k * 0.16), y1 = cym + (k - 2.5) * Rr * 0.16; curve([0, y0], [W * 0.16, y0], [cxm - Rr * 1.35, y1], [cxm - Rr * 0.92, y1], c, k * 0.17, t, still); });
-  // Decisiones que salen (derecha)
   stack.slice(0, 8).forEach((d, k) => { const y0 = cym + (k - 3.5) * Rr * 0.12, y1 = H * (0.08 + k * 0.12); curve([cxm + Rr * 0.92, y0], [cxm + Rr * 1.35, y0], [W * 0.84, y1], [W, y1], ST_COL[d.state] || '#4cc9ff', k * 0.13, t, still); });
-  // Partículas de la esfera
+  // Partículas (respiran ligeramente)
   for (const [x, y, z, rnd] of SPH) {
-    const X = x * cos - z * sin, Z = x * sin + z * cos, px = cxm + X * Rr, py = cym + y * Rr, depth = (Z + 1) / 2;
-    if (rnd > 0.94) { cx.beginPath(); cx.moveTo(cxm, cym); cx.lineTo(px, py); cx.strokeStyle = `rgba(245,196,81,${0.05 + 0.1 * depth})`; cx.lineWidth = 0.6; cx.stroke(); }
-    const a = 0.12 + 0.8 * depth, sz = 0.5 + 1.5 * depth;
+    const br = 1 + (still ? 0 : 0.025 * Math.sin(t / 700 + rnd * 40));
+    const [px, py, Z, k] = proj(x * br, y * br, z * br, cxm, cym, Rr), depth = (Z + 1) / 2;
+    if (rnd > 0.94) { cx.beginPath(); cx.moveTo(cxm, cym); cx.lineTo(px, py); cx.strokeStyle = `rgba(245,196,81,${0.04 + 0.1 * depth})`; cx.lineWidth = 0.6; cx.stroke(); }
+    const a = 0.1 + 0.82 * depth, sz = (0.5 + 1.5 * depth) * k;
     cx.fillStyle = rnd < 0.58 ? `rgba(245,196,81,${a})` : `rgba(120,170,255,${a})`;
     cx.fillRect(px - sz / 2, py - sz / 2, sz, sz);
   }
-  // Tokens recientes como nodos brillantes sobre la esfera
-  constel.slice(0, 70).forEach((tk, i) => {
-    const lat = Math.sin(tk.ang * 7.3), r = Math.sqrt(1 - lat * lat), x = r * Math.cos(tk.ang * 3), z = r * Math.sin(tk.ang * 3);
-    const X = x * cos - z * sin, Z = x * sin + z * cos; if (Z < -0.2 && i > 5) return;
-    const px = cxm + X * Rr * 1.02, py = cym + lat * Rr * 1.02, col = ST_COL[tk.state] || '#4cc9ff', size = 2 + Math.min(5, Math.sqrt(tk.f?.buyVol || 0) * 1.6) + (i < 3 ? 1.5 : 0);
-    cx.beginPath(); cx.arc(px, py, size, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = i < 6 ? 16 : 6; cx.fill(); cx.shadowBlur = 0;
-    if (i < 4) { cx.fillStyle = '#dbe6ff'; cx.font = '700 11px "JetBrains Mono", monospace'; cx.fillText('$' + tk.symbol, px + size + 5, py + 4); }
+  // Tokens: nacen en el centro y salen hacia su sitio en la superficie
+  nodes = [];
+  const now = performance.now();
+  constel.slice(0, 80).forEach((tk, i) => {
+    const lat = Math.sin(tk.ang * 7.3), r = Math.sqrt(1 - lat * lat), grow = Math.min(1, (now - (tk.born || 0)) / 1200), e = 1 - (1 - grow) ** 3;
+    const [px, py, Z, k] = proj(r * Math.cos(tk.ang * 3) * 1.04 * e, lat * 1.04 * e, r * Math.sin(tk.ang * 3) * 1.04 * e, cxm, cym, Rr);
+    const front = Z > -0.15, col = ST_COL[tk.state] || '#4cc9ff', sel = tk === hover || tk === pinned;
+    const size = (2 + Math.min(5, Math.sqrt(tk.f?.buyVol || 0) * 1.6) + (sel ? 3 : 0)) * k;
+    cx.globalAlpha = front ? 1 : 0.35;
+    cx.beginPath(); cx.arc(px, py, size, 0, Math.PI * 2); cx.fillStyle = col; cx.shadowColor = col; cx.shadowBlur = sel ? 26 : i < 6 ? 16 : 6; cx.fill(); cx.shadowBlur = 0;
+    if (sel) { cx.beginPath(); cx.arc(px, py, size + 6 + 2 * Math.sin(t / 200), 0, Math.PI * 2); cx.strokeStyle = col; cx.lineWidth = 1.5; cx.stroke(); }
+    if (front && (i < 4 || sel)) { cx.fillStyle = '#dbe6ff'; cx.font = '700 11px "JetBrains Mono", monospace'; cx.fillText('$' + tk.symbol, px + size + 5, py + 4); }
+    cx.globalAlpha = 1;
+    if (front) nodes.push({ x: px, y: py, tk });
   });
   cx.beginPath(); cx.arc(cxm, cym, 5, 0, Math.PI * 2); cx.fillStyle = '#ffffff'; cx.shadowColor = '#4cc9ff'; cx.shadowBlur = 24; cx.fill(); cx.shadowBlur = 0;
+  if (pinned && !hover) { const n = nodes.find(n => n.tk === pinned); if (n) showTip(n.x, n.y); }
   requestAnimationFrame(drawConst);
 }
 requestAnimationFrame(drawConst);
@@ -841,7 +898,7 @@ $('copy').onclick = async () => {
   try { await navigator.clipboard.writeText(rows); $('copy').textContent = 'Copiado ✓'; } catch { $('copy').textContent = 'No se pudo copiar'; }
   setTimeout(() => $('copy').textContent = 'Copiar resumen CSV', 2000);
 };
-window.__arena = { data, STRATS, scoreOf, tokens: () => tokens.size };
+window.__arena = { data, STRATS, scoreOf, tokens: () => tokens.size, constel, cam };
 setInterval(render, 1000); render();
 }
 </script>
