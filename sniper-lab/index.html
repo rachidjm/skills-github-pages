@@ -138,7 +138,7 @@ tr.ch td{background:var(--gBg)}
     <div>LANZAMIENTOS<strong id="kSeen">0</strong></div>
     <div>VETADOS<strong id="kVeto">0</strong></div>
     <div>ENTRADAS<strong id="kEntry">0</strong></div>
-    <div>OPS CERRADAS<strong id="kClosed">0</strong></div>
+    <div title="Operaciones en papel de las 144 estrategias del torneo (no del bot)">OPS TORNEO<strong id="kClosed">0</strong></div>
     <div id="clock">--:--:--<strong id="clockMad">--:--</strong></div>
   </div>
   <nav class="nav"><a href="#bot" id="navBot" class="on">BOT</a><a href="#lab" id="navLab">LABORATORIO</a></nav>
@@ -473,6 +473,7 @@ async function evaluate(mint) {
   const H = data.hours[t.hour]; H.vol += buyVol; H.evald++; if (v.length) H.veto++;
   bump('evald'); bump('inflow', buyVol); bump('score', f.score); if (v.length) bump('veto'); if (f.slot0Pct > 0.15) bump('bundle'); if (t.creatorLaunches > 1) bump('serial');
   tryEntries(t, Date.now());
+  { const bs = STRAT.get(pfTarget()); if (bs) { botWhy.seen++; if (!f.enough) botWhy.data++; else if (!bs.filter.f(f, t)) (v.length ? botWhy.veto++ : botWhy.filter++); else botWhy.ok++; } }
   const n = t.pos.size;
   t.state = n ? 'entry' : v.length ? 'veto' : 'skip';
   if (v.length) { data.totals.veto++; log('r', `VETO ${esc(t.symbol)} · ${esc(v[0])}`); tape('r', 'VETO', `$${t.symbol} · ${v[0]}`); }
@@ -591,6 +592,7 @@ const newPf = (start, mode, size, strategy) => ({ start, cash: start, mode, size
 let pf = null;
 try { pf = JSON.parse(localStorage.getItem(PF_KEY)); } catch {}
 if (!pf || !pf.positions) pf = newPf(100, 'fixed', 10, 'auto');
+const botWhy = { seen: 0, veto: 0, data: 0, filter: 0, ok: 0 };
 const pfSave = () => { try { localStorage.setItem(PF_KEY, JSON.stringify(pf)); } catch {} };
 setInterval(pfSave, 10000);
 // € que recibes al vender: comisiones %, slippage y fee de red fijo por transacción
@@ -692,7 +694,7 @@ function renderBot() {
     return `<tr><td><b>$${esc(p.symbol)}</b><br><span class="sub">${esc(st.name)}</span></td><td>${money(p.inv)}</td><td>${money(v)}</td><td class="big-pl" style="color:${col(d)}">${signed(d)}<br><span style="font-size:11px">${pc(100 * d / p.inv)}</span></td><td>${raw.toFixed(2).replace('.', ',')}x</td><td><span class="barx"><i style="left:${at}%"></i></span></td><td>${dur((Date.now() - p.at) / 1000)}</td></tr>`;
   });
   $('openTxt').textContent = `${nOpen} posicion${nOpen === 1 ? '' : 'es'} · ${money(inv)} invertidos`;
-  $('openRows').innerHTML = rows.length ? rows.join('') : `<tr><td colspan="7" style="color:var(--soft)">${running ? 'Ninguna posición abierta. Cuando la estrategia entre en un token aparecerá aquí con el dinero invertido.' : 'Pulsa PLAY para que el bot empiece a operar.'}</td></tr>`;
+  $('openRows').innerHTML = rows.length ? rows.join('') : `<tr><td colspan="7" style="color:var(--soft)">${running ? (botWhy.seen ? `El bot ha revisado ${botWhy.seen} tokens desde que abriste la página: ${botWhy.veto} vetados por riesgo, ${botWhy.data} sin datos suficientes, ${botWhy.filter} no pasan su filtro${botWhy.ok ? `, ${botWhy.ok} aceptados` : ''}. Está esperando uno que cumpla todo; cuando entre, aparecerá aquí con el dinero invertido.` : 'Revisando los primeros tokens… la primera decisión llega unos 20 s después de cada lanzamiento.') : 'Pulsa PLAY para que el bot empiece a operar.'}</td></tr>`;
   if (pf.closed.length !== lastClosedLen) {
     lastClosedLen = pf.closed.length;
     $('histTxt').textContent = `${pf.closed.length} cerradas · resultado ${signed(real)}`;
