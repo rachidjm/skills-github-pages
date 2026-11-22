@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sniper Lab // Solana</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* VOICE: terminal de trading nocturno, denso, todo en directo
+   IDEA: la mesa de un operador: cinta de noticias arriba, marcadores grandes, pila de decisiones, registro de agentes
+   PICTURE: tasa de acierto gigante + constelación de tokens que se colorea según la decisión
+   COLOUR and TYPE: casi negro azulado, verde = acierto/entrada, rojo = fallo/veto, ámbar = espera, cian = info. Inter + JetBrains Mono
+   LAYOUT: barra superior, cinta, 3 columnas arriba, observables | constelación | pila de decisiones, abajo aspirantes | operaciones | registro */
+:root{--bg:#070b14;--panel:#0b1220;--panel2:#0e1728;--line:#1a2740;--ink:#dbe6ff;--soft:#7f8fb0;--dim:#4b5a78;
+--g:#3ef08a;--gBg:rgba(62,240,138,.12);--r:#ff4d6d;--rBg:rgba(255,77,109,.12);--a:#ffb547;--aBg:rgba(255,181,71,.12);--c:#4cc9ff;--p:#a78bfa}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,system-ui,sans-serif;overflow-x:clip}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.top{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0b1424,#070b14)}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:34px;height:34px;border-radius:9px;background:radial-gradient(circle at 35% 35%,#7ef7c1,#1b6dff 70%);box-shadow:0 0 18px rgba(76,201,255,.45)}
+.brand b{font:800 18px Inter;letter-spacing:.02em}.brand span{display:block;font-size:11px;color:var(--soft)}
+.counters{display:flex;flex-wrap:wrap;gap:6px 22px}
+.counters div{font-size:11px;color:var(--soft)}.counters strong{display:block;font:700 18px 'JetBrains Mono',ui-monospace,monospace;color:var(--ink)}
+.ctl{display:flex;gap:8px;align-items:center}
+button{font:700 13px Inter;border-radius:10px;min-height:40px;padding:0 16px;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+button:focus-visible{outline:2px solid var(--c);outline-offset:2px}
+button.go{background:var(--g);color:#05210f;border-color:var(--g)}
+button.halt{border-color:var(--r);color:var(--r)}
+button:disabled{opacity:.35;cursor:default}
+.live{display:inline-flex;align-items:center;gap:6px;font:700 12px 'JetBrains Mono',ui-monospace,monospace;padding:5px 10px;border-radius:7px;background:var(--rBg);color:var(--r)}
+.live.on{background:var(--gBg);color:var(--g)}
+.live i{width:8px;height:8px;border-radius:50%;background:currentColor}
+.live.on i{animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.2}}
+.tape{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--line);background:#0a1120;overflow:hidden;height:34px}
+.tape .tag{flex:none;background:var(--r);color:#fff;font:700 11px 'JetBrains Mono',ui-monospace,monospace;padding:0 12px;height:100%;display:flex;align-items:center}
+.tape .run{white-space:nowrap;font:600 12px 'JetBrains Mono',ui-monospace,monospace;color:var(--soft);padding-left:100%;animation:run 70s linear infinite}
+.tape .run b.g{color:var(--g)}.tape .run b.r{color:var(--r)}.tape .run b.a{color:var(--a)}.tape .run b.c{color:var(--c)}
+@keyframes run{to{transform:translateX(-100%)}}
+@media(prefers-reduced-motion:reduce){.tape .run{animation:none;padding-left:12px}.live.on i{animation:none}}
+.wrap{padding:12px;display:grid;gap:12px}
+.row{display:grid;gap:12px}
+.r1{grid-template-columns:minmax(0,4fr) minmax(0,5fr) minmax(0,4fr)}
+.r2{grid-template-columns:minmax(0,3fr) minmax(0,5fr) minmax(0,4fr)}
+.r3{grid-template-columns:minmax(0,5fr) minmax(0,4fr) minmax(0,4fr)}
+.pn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;position:relative}
+.pn h2{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.06em;color:var(--soft);margin:0 0 10px;display:flex;justify-content:space-between;gap:8px}
+.pn h2 em{font-style:normal;color:var(--dim)}
+.big{font:800 clamp(54px,7vw,84px)/1 Inter;letter-spacing:-.02em}
+.sub{color:var(--soft);font-size:12px}
+.split{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.split div{background:var(--panel2);border-radius:9px;padding:8px 10px}
+.split span{display:block;font-size:11px;color:var(--soft)}.split strong{font:700 17px 'JetBrains Mono',ui-monospace,monospace}
+.bar3{display:flex;height:8px;border-radius:99px;overflow:hidden;margin-top:10px;background:var(--panel2)}
+.bar3 i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--soft);margin-top:6px}
+.legend b{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.fig{position:relative;min-height:200px}.fig>svg,.fig>canvas{position:absolute;inset:0;width:100%;height:100%}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+.kpis div{font-size:11px;color:var(--soft)}.kpis strong{display:block;font:700 15px 'JetBrains Mono',ui-monospace,monospace;color:var(--ink)}
+.hours{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px;align-items:end;height:130px}
+.hours div{background:#1c2b47;border-radius:3px 3px 0 0;min-height:2px}.hours div.hot{background:var(--c);box-shadow:0 0 8px rgba(76,201,255,.5)}
+.hlab{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:2px;font:10px 'JetBrains Mono',ui-monospace,monospace;color:var(--dim);text-align:center;margin-top:4px}
+.seg{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.seg button{min-height:28px;font-size:11px;padding:0 9px;border-radius:7px;color:var(--soft)}
+.seg button.on{background:var(--c);color:#04121c;border-color:var(--c)}
+.obs{display:grid;gap:10px}
+.ob{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;border-left:2px solid var(--c);padding-left:9px}
+.ob .t{font:700 11px 'JetBrains Mono',ui-monospace,monospace;color:var(--ink)}.ob .v{font:700 13px 'JetBrains Mono',ui-monospace,monospace;text-align:right}
+.ob .d{font-size:11px;color:var(--soft)}.ob svg{grid-column:1/-1;width:100%;height:26px}
+.stack{display:grid;gap:6px;max-height:470px;overflow:auto}
+.dc{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 9px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--dim);border-radius:9px;padding:8px 10px}
+.dc .lab{font:700 10px 'JetBrains Mono',ui-monospace,monospace;padding:2px 6px;border-radius:5px}
+.dc .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dc .sc{font:800 20px 'JetBrains Mono',ui-monospace,monospace;text-align:right}
+.dc .why{grid-column:1/-1;font-size:11px;color:var(--soft)}
+.dc.entry{border-left-color:var(--g)}.dc.entry .lab{background:var(--gBg);color:var(--g)}.dc.entry .sc{color:var(--g)}
+.dc.veto{border-left-color:var(--r)}.dc.veto .lab{background:var(--rBg);color:var(--r)}.dc.veto .sc{color:var(--r)}
+.dc.skip{border-left-color:var(--a)}.dc.skip .lab{background:var(--aBg);color:var(--a)}.dc.skip .sc{color:var(--a)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{font:700 10px 'JetBrains Mono',ui-monospace,monospace;color:var(--dim);text-align:right;padding:5px 4px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+td{padding:6px 4px;border-bottom:1px solid #121d31;text-align:right;font-family:'JetBrains Mono',ui-monospace,monospace;white-space:nowrap}
+td:first-child{font-family:Inter;white-space:normal}
+tr.ch td{background:var(--gBg)}
+.scroll{overflow:auto;max-height:420px}
+.tt{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 8px;padding:6px 0;border-bottom:1px solid #121d31;font-size:12px}
+.tt .s{font:700 12px 'JetBrains Mono',ui-monospace,monospace}.tt .n{font:700 12px 'JetBrains Mono',ui-monospace,monospace;text-align:right}.tt .w{grid-column:1/-1;color:var(--soft);font-size:11px}
+.log{font:12px/1.55 'JetBrains Mono',ui-monospace,monospace;color:var(--soft);max-height:420px;overflow:auto;white-space:pre-wrap}
+.log .g{color:var(--g)}.log .r{color:var(--r)}.log .a{color:var(--a)}.log .c{color:var(--c)}.log .p{color:var(--p)}
+.warn{display:none;background:var(--rBg);border:1px solid var(--r);color:#ffd2da;border-radius:12px;padding:12px 14px}
+.src{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.src span{font:600 11px 'JetBrains Mono',ui-monospace,monospace;padding:3px 8px;border-radius:6px;background:var(--panel2);color:var(--soft)}
+.src span.on{color:var(--g);background:var(--gBg)}
+.foot{color:var(--dim);font-size:11px;padding:0 4px 16px}
+@media(max-width:1100px){.r1,.r2,.r3{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hlab span:nth-child(odd){visibility:hidden}.counters strong{font-size:15px}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand"><div class="logo"></div><div><b>SNIPER LAB // SOLANA</b><span>pump.fun · mercado real · papel · 0 claves</span></div></div>
+  <div class="counters mono">
+    <div>LANZAMIENTOS<strong id="kSeen">0</strong></div>
+    <div>VETADOS<strong id="kVeto">0</strong></div>
+    <div>ENTRADAS<strong id="kEntry">0</strong></div>
+    <div>OPS CERRADAS<strong id="kClosed">0</strong></div>
+    <div id="clock">--:--:--<strong id="clockMad">--:--</strong></div>
+  </div>
+  <div class="ctl"><span class="live" id="live"><i></i><span id="liveTxt">PAUSA</span></span><button class="go" id="play">▶ PLAY</button><button class="halt" id="stop">■ STOP</button></div>
+</div>
+<div class="tape"><div class="tag">● EN VIVO</div><div class="run" id="tape">Pulsa PLAY para conectar con Pump.fun y la blockchain de Solana…</div></div>
+
+<div class="wrap">
+  <div class="warn" id="warn"><b>Esta copia no consigue conectarse a la blockchain.</b> Pasa al abrirla como archivo (C:/…) o en vistas previas. Ábrela desde su enlace https o en la app de Claude del PC.</div>
+
+  <div class="row r1">
+    <section class="pn">
+      <h2>TASA DE ACIERTO <em id="hrScope">todas las estrategias</em></h2>
+      <div class="big mono" id="hr">–</div>
+      <div class="sub" id="hrSub">Esperando las primeras operaciones cerradas</div>
+      <div class="split">
+        <div><span>Aciertos</span><strong id="wins" style="color:var(--g)">0</strong></div>
+        <div><span>Fallos</span><strong id="losses" style="color:var(--r)">0</strong></div>
+        <div><span>€ medio/op</span><strong id="avg">–</strong></div>
+      </div>
+      <div class="bar3" id="bar3"></div>
+      <div class="legend"><span><b style="background:var(--g)"></b>objetivo <span id="pTP">–</span></span><span><b style="background:var(--r)"></b>stop <span id="pSL">–</span></span><span><b style="background:var(--a)"></b>tiempo/sin actividad <span id="pT">–</span></span></div>
+    </section>
+    <section class="pn">
+      <h2>CAMPEÓN <em id="chBadge">buscando</em></h2>
+      <div style="font-weight:700;font-size:15px" id="chName">Todavía ninguno</div>
+      <div class="kpis">
+        <div>ACIERTO<strong id="cWr">–</strong></div><div>€/OP<strong id="cAvg">–</strong></div><div>OPS<strong id="cN">0</strong></div><div>RESULTADO<strong id="cPnl">–</strong></div>
+      </div>
+      <div class="fig" style="min-height:170px;margin-top:8px"><svg id="chart"></svg></div>
+      <div class="sub" id="chWhy"></div>
+    </section>
+    <section class="pn">
+      <h2>ACTIVIDAD POR HORA <em>hora de Madrid</em></h2>
+      <div class="seg" id="hsel"><button data-v="tokens" class="on">tokens</button><button data-v="x2">% a 2x</button><button data-v="rug">% hundidos</button><button data-v="veto">% vetados</button></div>
+      <div class="hours" id="hours"></div><div class="hlab" id="hlab"></div>
+      <div class="sub" id="hoursNote" style="margin-top:8px"></div>
+    </section>
+  </div>
+
+  <div class="row r2">
+    <section class="pn">
+      <h2>OBSERVABLES <em>últimos 30 min</em></h2>
+      <div class="obs" id="obs"></div>
+    </section>
+    <section class="pn">
+      <h2>CONSTELACIÓN DE LANZAMIENTOS <em id="constTxt">0 tokens</em></h2>
+      <div class="fig" style="min-height:430px"><canvas id="const"></canvas></div>
+      <div class="legend"><span><b style="background:var(--g)"></b>entra alguna estrategia</span><span><b style="background:var(--r)"></b>vetado</span><span><b style="background:var(--a)"></b>sin entrada</span><span><b style="background:var(--c)"></b>evaluando</span></div>
+    </section>
+    <section class="pn">
+      <h2>PILA DE DECISIONES <em>puntuación de riesgo 0–100</em></h2>
+      <div class="stack" id="stack"><div class="sub">Las decisiones aparecen 20 s después de cada lanzamiento.</div></div>
+    </section>
+  </div>
+
+  <div class="row r3">
+    <section class="pn">
+      <h2>ASPIRANTES <em id="nStrat">0 estrategias</em></h2>
+      <div class="scroll"><table><thead><tr><th>Estrategia</th><th>Ops</th><th>Acierto</th><th>€/op</th><th>Mín. fiable</th><th>Total</th></tr></thead><tbody id="table"><tr><td colspan="6" style="color:var(--soft)">Esperando operaciones…</td></tr></tbody></table></div>
+    </section>
+    <section class="pn">
+      <h2>CINTA DE OPERACIONES <em>todas las estrategias</em></h2>
+      <div class="scroll" id="trades"><div class="sub">Sin operaciones cerradas todavía.</div></div>
+    </section>
+    <section class="pn">
+      <h2>REGISTRO DE AGENTES <em>tail -f</em></h2>
+      <div class="log" id="log"></div>
+      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span>X · falta clave</span><span>Telegram · falta api_id</span><span>IA · falta clave</span></div>
+    </section>
+  </div>
+  <div class="foot">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button></div>
+</div>
+
+<script>
+{
+// ===================== Configuración =====================
+const CFG = { sizeEur: 1, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
+  feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9 };
+const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
+let solEur = 130;
+fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eur').then(r => r.json()).then(j => { if (j?.solana?.eur) solEur = j.solana.eur; }).catch(() => {});
+
+// ===================== Utilidades =====================
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const eur = v => (v < 0 ? '-' : v > 0 ? '+' : '') + '€' + Math.abs(v).toFixed(2).replace('.', ',');
+const pc = (v, d = 1) => (v > 0 ? '+' : '') + v.toFixed(d).replace('.', ',') + '%';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const b58 = b => { const d = [0]; for (const x of b) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let s = ''; for (const x of b) { if (x) break; s += '1'; } return s + d.reverse().map(i => B58[i]).join(''); };
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const TRADE_DISC = [189, 219, 127, 211, 78, 230, 97, 238];
+const netReturn = raw => { const cost = (CFG.feePct + CFG.slipPct) / 100, fix = CFG.netFeeSol * solEur; const bought = Math.max(0, CFG.sizeEur - fix) / (1 + cost); return (Math.max(0, bought * raw * (1 - cost) - fix) / CFG.sizeEur - 1) * 100; };
+const madrid = (ts, o) => new Intl.DateTimeFormat('es-ES', { timeZone: 'Europe/Madrid', ...o }).format(ts);
+const madridHour = ts => Number(madrid(ts, { hour: 'numeric', hourCycle: 'h23' }));
+const lin = (v, full, zero) => Math.max(0, Math.min(1, (zero - v) / (zero - full)));   // 1 en "full", 0 en "zero"
+
+// ===================== RPC con cola y prioridad =====================
+let inFlight = 0, rpcCalls = 0, rpcErrors = 0; const queue = [];
+function rpc(method, params, urgent = false) {
+  return new Promise((resolve, reject) => { const job = { method, params, resolve, reject, tries: 0 }; urgent ? queue.unshift(job) : queue.push(job); pump(); });
+}
+function pump() {
+  while (inFlight < CFG.concurrency && queue.length) {
+    const job = queue.shift(); inFlight++;
+    fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: job.method, params: job.params }) })
+      .then(r => r.status === 429 ? Promise.reject(new Error('429')) : r.json())
+      .then(j => { rpcCalls++; if (j.error) throw new Error(j.error.message); job.resolve(j.result); })
+      .catch(async e => { rpcErrors++; if (++job.tries < 3) { await sleep(1500 * job.tries); queue.push(job); } else job.reject(e); })
+      .finally(() => { inFlight--; pump(); });
+  }
+}
+
+// ===================== Estrategias =====================
+const ENTRIES = [{ id: 'e20', s: 20, txt: '20 s' }, { id: 'e120', s: 120, txt: '2 min' }, { id: 'e600', s: 600, txt: '10 min' }];
+const TPS = [1.5, 2, 3], SLS = [25, 40];
+const FILTERS = [
+  { id: 'all', txt: 'todos', f: () => true },
+  { id: 'mayhem', txt: 'solo mayhem', f: x => x.mayhem },
+  { id: 'nomayhem', txt: 'sin mayhem', f: x => !x.mayhem },
+  { id: 'accel', txt: 'compras acelerando', f: x => x.accel },
+  { id: 'devok', txt: 'creador sin vender', f: x => !x.devSold },
+  { id: 'big', txt: 'compra >2 SOL', f: x => x.maxBuy > 2 },
+  { id: 'bundle', txt: '3+ compras en el bloque inicial', f: x => x.bundleBuys >= 3 },
+  { id: 'serial', txt: 'creador en serie', f: x => x.creatorLaunches > 1 },
+  { id: 'accel_devok', txt: 'acelerando y creador sin vender', f: x => x.accel && !x.devSold },
+  { id: 'rising', txt: 'sigue subiendo al entrar', f: (x, t) => t.mcap > t.m20 * 1.1 },
+  // Nuevos: reglas de riesgo de holders (idea pública de escáneres tipo QuantumOrb, código propio)
+  { id: 'clean', txt: 'sin vetos de riesgo', f: x => !x.vetoes.length },
+  { id: 'score60', txt: 'riesgo ≥60/100', f: x => x.score >= 60 },
+  { id: 'clean_accel', txt: 'sin vetos y acelerando', f: x => !x.vetoes.length && x.accel },
+];
+const STRATS = [];
+for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
+  if (fl.id === 'rising' && e.s === 20) continue;
+  STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.s, tp, sl, filter: fl, name: `Entrar a ${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
+}
+const STRAT = new Map(STRATS.map(s => [s.id, s]));
+
+// ===================== Estado persistente =====================
+let data = { since: Date.now(), stats: {}, hours: [], champ: null, hist: [], champTrades: [], last: [], reasons: { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }, totals: { seen: 0, veto: 0, entry: 0 } };
+try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.stats) data = { ...data, ...s }; } catch {}
+data.reasons ??= { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }; data.totals ??= { seen: 0, veto: 0, entry: 0 }; data.last ??= [];
+data.hours = Array.from({ length: 24 }, (_, i) => ({ tokens: 0, x2: 0, rug: 0, vol: 0, done: 0, veto: 0, evald: 0, ...(data.hours?.[i] || {}) }));
+for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
+setInterval(save, 15000);
+
+// ===================== Registro, cinta y observables =====================
+const logLines = [], tapeItems = [], stack = [], constel = [];
+const minute = () => Math.floor(Date.now() / 60000);
+const series = { launches: new Map(), inflow: new Map(), veto: new Map(), evald: new Map(), bundle: new Map(), score: new Map(), serial: new Map() };
+const bump = (k, v = 1) => { const m = minute(), s = series[k]; s.set(m, (s.get(m) || 0) + v); for (const key of s.keys()) if (key < m - 40) s.delete(key); };
+function log(cls, txt) {
+  const t = madrid(Date.now(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  logLines.unshift(`<span class="${cls}">[${t}]</span> ${txt}`); logLines.length = Math.min(logLines.length, 80);
+}
+function tape(cls, label, txt) { tapeItems.unshift(`<b class="${cls}">${label}</b> ${esc(txt)}`); tapeItems.length = Math.min(tapeItems.length, 18); }
+
+// ===================== Fuente 1: tokens nuevos (PumpPortal, gratis) =====================
+const tokens = new Map(), creators = new Map(), names = new Map();
+let running = false, ws = null, seen = 0, wsOk = false, startedAt = 0;
+function connect() {
+  ws = new WebSocket(PP);
+  ws.onopen = () => { wsOk = true; ws.send(JSON.stringify({ method: 'subscribeNewToken' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
+  ws.onmessage = m => { let e; try { e = JSON.parse(m.data); } catch { return; } if (e.txType === 'create') onCreate(e); };
+  ws.onclose = () => { ws = null; if (running) setTimeout(() => running && connect(), 3000); };
+  ws.onerror = () => {};
+}
+function onCreate(e) {
+  const now = Date.now(), nm = String(e.name || '').trim().toLowerCase();
+  names.set(nm, [...(names.get(nm) || []).filter(t => now - t < 3600e3), now]);
+  if (e.traderPublicKey) creators.set(e.traderPublicKey, [...(creators.get(e.traderPublicKey) || []).filter(t => now - t < 3600e3), now]);
+  if (e.pool !== 'pump' || !e.bondingCurveKey || tokens.has(e.mint)) return;
+  seen++; data.totals.seen++; bump('launches');
+  const h = madridHour(now); data.hours[h].tokens++;
+  const t = { mint: e.mint, symbol: String(e.symbol || '?').slice(0, 12), creator: e.traderPublicKey, bc: e.bondingCurveKey, createdAt: now, hour: h,
+    launch: e.marketCapSol, devBuy: Number(e.solAmount) || 0, devTokens: Number(e.initialBuy) || 0, mayhem: Boolean(e.is_mayhem_mode), phase: 'window', mcap: e.marketCapSol, lastChange: now,
+    copies: names.get(nm).length, creatorLaunches: (creators.get(e.traderPublicKey) || []).length, pos: new Map(), decided: new Set(), state: 'eval', ang: Math.random() * Math.PI * 2 };
+  tokens.set(e.mint, t); constel.unshift(t); constel.length = Math.min(constel.length, 160);
+  if (t.creatorLaunches > 2) log('a', `NEW ${esc(t.symbol)} · el creador lleva ${t.creatorLaunches} lanzamientos en 1 h`);
+  else log('c', `NEW ${esc(t.symbol)} · ${t.mayhem ? 'modo mayhem · ' : ''}creador compra ${t.devBuy.toFixed(2)} SOL`);
+  tape('c', 'NEW', `$${t.symbol}`);
+  setTimeout(() => evaluate(e.mint).catch(() => { t.state = 'skip'; tokens.delete(e.mint); }), CFG.windowSec * 1000);
+}
+
+// ===================== Fuente 2: blockchain (nodo público) =====================
+function decodeTrades(tx, mint) {
+  const out = [], sig = tx?.transaction?.signatures?.[0];
+  for (const l of tx?.meta?.logMessages || []) {
+    if (!l.startsWith('Program data: ')) continue;
+    let u; try { u = b64(l.slice(14)); } catch { continue; }
+    if (u.length < 113 || !TRADE_DISC.every((v, i) => u[i] === v) || b58(u.slice(8, 40)) !== mint) continue;
+    const dv = new DataView(u.buffer), vs = Number(dv.getBigUint64(97, true)), vt = Number(dv.getBigUint64(105, true));
+    out.push({ sig, sol: Number(dv.getBigUint64(40, true)) / 1e9, tokens: Number(dv.getBigUint64(48, true)) / 1e6, buy: u[56] === 1, user: b58(u.slice(57, 89)), ts: Number(dv.getBigInt64(89, true)), slot: tx.slot, mcap: vt ? (vs / 1e9) / (vt / 1e6) * 1e9 : 0 });
+  }
+  return out;
+}
+const curveRead = d => { const u = b64(d), dv = new DataView(u.buffer), vt = Number(dv.getBigUint64(8, true)), vs = Number(dv.getBigUint64(16, true)); return { mcap: vt ? (vs / 1e9) / (vt / 1e6) * 1e9 : 0, vtTokens: vt / 1e6, complete: u[48] === 1 }; };
+
+async function evaluate(mint) {
+  const t = tokens.get(mint); if (!t) return;
+  t.phase = 'evaluating';
+  const [sigs, csigs, acc] = await Promise.all([
+    rpc('getSignaturesForAddress', [t.bc, { limit: 100 }]),
+    rpc('getSignaturesForAddress', [t.creator, { limit: 100 }]).catch(() => []),
+    rpc('getMultipleAccounts', [[t.bc], { encoding: 'base64' }]),
+  ]);
+  const ok = sigs.filter(s => !s.err), oldest = ok.at(-1);
+  const t0 = ok.length < 100 && oldest?.blockTime ? oldest.blockTime : Math.floor(t.createdAt / 1000) - 1;
+  const createSlot = ok.length < 100 ? oldest?.slot : null;
+  const inWindow = ok.filter(s => s.blockTime && s.blockTime <= t0 + CFG.windowSec).slice(0, CFG.maxTxPerToken);
+  const txs = await Promise.all(inWindow.map(s => rpc('getTransaction', [s.signature, { encoding: 'json', maxSupportedTransactionVersion: 1, commitment: 'confirmed' }]).catch(() => null)));
+  const trades = txs.flatMap(tx => decodeTrades(tx, mint)).filter(x => x.ts <= t0 + CFG.windowSec);
+  const cur = acc?.value?.[0] ? curveRead(acc.value[0].data[0]) : { mcap: t.mcap, vtTokens: 0 };
+  t.mcap = cur.mcap || t.mcap;
+
+  const buys = trades.filter(x => x.buy), sells = trades.filter(x => !x.buy);
+  const ext = buys.filter(x => x.user !== t.creator);
+  const byUser = new Map(); for (const b of ext) byUser.set(b.user, (byUser.get(b.user) || 0) + b.sol);
+  const buyVol = buys.reduce((s, b) => s + b.sol, 0), half = t0 + CFG.windowSec / 2;
+  // Tokens netos por wallet → concentración, impacto de venta y snipers que siguen dentro
+  const hold = new Map(); for (const x of trades) hold.set(x.user, (hold.get(x.user) || 0) + (x.buy ? x.tokens : -x.tokens));
+  const holds = [...hold.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const top10 = holds.slice(0, 10).reduce((s, [, v]) => s + v, 0) / CFG.supply;
+  const biggest = holds[0]?.[1] || 0, R = cur.vtTokens || 1e9;
+  const impact = biggest ? 1 - (R / (R + biggest)) ** 2 : 0;                 // caída de precio si el mayor vende todo de golpe
+  const slot0Tokens = createSlot ? buys.filter(x => x.slot === createSlot).reduce((s, b) => s + b.tokens, 0) : 0;
+  const snipers = new Set(ext.filter(x => x.ts <= t0 + 3).map(x => x.user));
+  const sniperHeld = [...snipers].reduce((s, u) => s + Math.max(0, hold.get(u) || 0), 0) / CFG.supply;
+  const devHeld = Math.max(0, hold.get(t.creator) || 0) / CFG.supply;
+  // Varias wallets compradoras en la misma transacción = un solo actor (bundle probado)
+  const bySig = new Map(); for (const b of buys) { if (!b.sig) continue; const s = bySig.get(b.sig) || new Set(); s.add(b.user); bySig.set(b.sig, s); }
+  const sameTx = [...bySig.values()].filter(s => s.size >= 2).length;
+  // "Manada": 3+ wallets que entran en 2 bloques con importes parecidos (±30%)
+  let pack = 0;
+  const firsts = [...byUser.keys()].map(u => ext.find(x => x.user === u)).filter(Boolean).sort((a, b) => a.slot - b.slot);
+  for (let i = 0; i < firsts.length; i++) {
+    const grp = firsts.filter(x => x.slot >= firsts[i].slot && x.slot <= firsts[i].slot + 2);
+    const med = grp.map(x => x.sol).sort((a, b) => a - b)[Math.floor(grp.length / 2)] || 0;
+    const similar = grp.filter(x => med > 0 && Math.abs(x.sol - med) <= 0.3 * med);
+    pack = Math.max(pack, similar.length);
+  }
+  const f = {
+    uniqueBuyers: byUser.size, buyVol: +buyVol.toFixed(3), devSold: sells.some(x => x.user === t.creator), devBuy: t.devBuy,
+    creatorTx: (csigs || []).length, creatorLaunches: t.creatorLaunches, bundleBuys: createSlot ? ext.filter(x => x.slot === createSlot).length : 0,
+    accel: buys.filter(x => x.ts > half).length > buys.filter(x => x.ts <= half).length, maxBuy: Math.max(0, ...ext.map(x => x.sol)), copies: t.copies, mayhem: t.mayhem,
+    devLaunchPct: t.devTokens / CFG.supply, slot0Pct: slot0Tokens / CFG.supply, top10, impact, sniperHeld, devHeld, sameTx, pack,
+  };
+  // Puntuación de riesgo 0–100 (100 = más limpio). Pesos propios inspirados en reglas públicas de escáneres de holders
+  f.score = Math.round(35 * lin(impact, 0.10, 0.60) + 20 * lin(f.slot0Pct, 0.05, 0.30) + 15 * lin(sniperHeld, 0.01, 0.15) + 15 * lin(top10, 0.25, 0.70) + 15 * lin(f.devLaunchPct, 0.03, 0.15));
+  const v = [];
+  if (f.devSold) v.push('el creador ya vendió');
+  if (f.devLaunchPct >= 0.15) v.push(`el creador compró el ${Math.round(f.devLaunchPct * 100)}% al lanzar`);
+  if (f.slot0Pct >= 0.30) v.push(`${Math.round(f.slot0Pct * 100)}% comprado en el primer bloque`);
+  if (devHeld >= 0.15) v.push(`el creador aún tiene el ${Math.round(devHeld * 100)}%`);
+  if (sameTx >= 2) v.push(`${sameTx} transacciones con varias wallets a la vez`);
+  if (pack >= 4) v.push(`manada de ${pack} wallets con importes calcados`);
+  if (t.creatorLaunches >= 3) v.push(`creador en serie: ${t.creatorLaunches} lanzamientos en 1 h`);
+  if (impact >= 0.5) v.push(`una wallet puede hundirlo un ${Math.round(impact * 100)}%`);
+  f.vetoes = v;
+  t.f = f; t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
+  const H = data.hours[t.hour]; H.vol += buyVol; H.evald++; if (v.length) H.veto++;
+  bump('evald'); bump('inflow', buyVol); bump('score', f.score); if (v.length) bump('veto'); if (f.slot0Pct > 0.15) bump('bundle'); if (t.creatorLaunches > 1) bump('serial');
+  tryEntries(t, Date.now());
+  const n = t.pos.size;
+  t.state = n ? 'entry' : v.length ? 'veto' : 'skip';
+  if (v.length) { data.totals.veto++; log('r', `VETO ${esc(t.symbol)} · ${esc(v[0])}`); tape('r', 'VETO', `$${t.symbol} · ${v[0]}`); }
+  if (n) { data.totals.entry++; log('g', `ENTRY ${esc(t.symbol)} · ${n} estrategias · riesgo ${f.score}/100`); tape('g', 'ENTRY', `$${t.symbol} · ${n} estrategias`); }
+  else if (!v.length) log('a', `SKIP ${esc(t.symbol)} · ${f.uniqueBuyers} compradores · ${f.buyVol} SOL`);
+  stack.unshift({ symbol: t.symbol, state: t.state, score: f.score, n, why: v.length ? v.slice(0, 2).join(' · ') : `${f.uniqueBuyers} compradores · ${f.buyVol} SOL · top10 ${Math.round(top10 * 100)}%${f.accel ? ' · acelerando' : ''}` });
+  stack.length = Math.min(stack.length, 40);
+}
+
+// ===================== Entradas y salidas de todas las estrategias =====================
+function tryEntries(t, now) {
+  if (!running) return;
+  const age = (now - t.createdAt) / 1000, alive = now - t.lastChange < 120e3;
+  for (const s of STRATS) {
+    if (t.decided.has(s.id) || age < s.entry) continue;
+    t.decided.add(s.id);
+    if (age > s.entry + 60 || !alive) continue;
+    if (s.filter.f(t.f, t)) t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 });
+  }
+}
+function settle(t, now, forceAll = false) {
+  for (const [id, p] of t.pos) {
+    const s = STRAT.get(id), m = t.mcap / p.entry;
+    let reason = null;
+    if (p.exiting) reason = p.exiting;
+    else if (m >= s.tp) { p.exiting = 'objetivo'; p.trig = s.tp * p.entry; continue; }
+    else if (m <= 1 - s.sl / 100) { p.exiting = 'stop'; continue; }
+    else if (forceAll) reason = 'sin actividad';
+    else if (now - p.at > CFG.holdMin * 60e3) reason = 'tiempo';
+    if (!reason) continue;
+    const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig) : t.mcap) / p.entry;
+    record(id, netReturn(raw), t, reason, now);
+    t.pos.delete(id);
+  }
+}
+function record(id, net, t, reason, now) {
+  const st = data.stats[id]; st.n++; st.sum += net; if (net > 0) st.wins++;
+  st.recent.push(+net.toFixed(2)); if (st.recent.length > CFG.recentN) st.recent.shift();
+  data.reasons[reason] = (data.reasons[reason] || 0) + 1;
+  data.last.unshift({ ts: now, symbol: t.symbol, id, net: +net.toFixed(1), reason }); data.last.length = Math.min(data.last.length, 60);
+  if (data.champ && data.champ.id === id) {
+    data.champTrades.push({ ts: now, symbol: t.symbol, net: +net.toFixed(2), reason }); if (data.champTrades.length > 300) data.champTrades.shift();
+    log(net > 0 ? 'g' : 'r', `${reason === 'objetivo' ? 'TP' : reason === 'stop' ? 'SL' : 'EXIT'} ${esc(t.symbol)} ${pc(net)} · campeón`);
+    tape(net > 0 ? 'g' : 'r', net > 0 ? 'TP' : 'SL', `$${t.symbol} ${pc(net)}`);
+  }
+}
+function finishToken(t) {
+  const H = data.hours[t.hour]; H.done++; if (t.max / t.m20 >= 2) H.x2++; if (t.min / t.m20 <= 0.5) H.rug++;
+  t.phase = 'done'; tokens.delete(t.mint);
+}
+
+// ===================== Lectura de precios (curva on-chain, 10 cuentas por llamada) =====================
+async function poll() {
+  const list = [...tokens.values()].filter(t => t.phase === 'tracking');
+  for (let i = 0; i < list.length; i += 10) {
+    const chunk = list.slice(i, i + 10);
+    let res; try { res = await rpc('getMultipleAccounts', [chunk.map(t => t.bc), { encoding: 'base64' }], true); } catch { continue; }
+    const now = Date.now();
+    chunk.forEach((t, k) => {
+      const a = res?.value?.[k]; if (!a || t.phase !== 'tracking') return;
+      const { mcap } = curveRead(a.data[0]); if (!mcap) return;
+      if (Math.abs(mcap - t.mcap) / t.mcap > 0.001) t.lastChange = now;
+      t.mcap = mcap; t.max = Math.max(t.max, mcap); t.min = Math.min(t.min, mcap);
+      tryEntries(t, now);
+      const inactive = now - t.lastChange > CFG.inactiveMin * 60e3;
+      settle(t, now, inactive);
+      const age = (now - t.createdAt) / 1000, pending = running && age < 700 && !inactive;
+      if (!t.pos.size && (!pending || age > CFG.trackMaxMin * 60)) finishToken(t);
+    });
+  }
+}
+let polling = false;
+setInterval(() => { if (polling) return; polling = true; poll().catch(() => {}).finally(() => { polling = false; }); }, CFG.pollMs);
+
+// ===================== Campeón =====================
+function scoreOf(id) {
+  const r = data.stats[id].recent, n = r.length; if (n < 1) return null;
+  const mean = r.reduce((s, x) => s + x, 0) / n, sd = Math.sqrt(r.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, n - 1));
+  return { id, n, mean, lb: mean - sd / Math.sqrt(n), wr: 100 * r.filter(x => x > 0).length / n };
+}
+function pickChampion() {
+  const c = STRATS.map(s => scoreOf(s.id)).filter(x => x && x.n >= CFG.minN).sort((a, b) => b.lb - a.lb);
+  if (!c.length) return;
+  const best = c[0], cur = data.champ ? scoreOf(data.champ.id) : null;
+  if (!cur || best.id !== data.champ.id && best.lb > cur.lb + 2) {
+    data.hist.unshift({ ts: Date.now(), id: best.id, lb: +best.lb.toFixed(1), n: best.n, prev: data.champ?.id || null, prevLb: cur ? +cur.lb.toFixed(1) : null });
+    data.hist.length = Math.min(data.hist.length, 50);
+    data.champ = { id: best.id, since: Date.now() }; data.champTrades = [];
+    log('p', `CHAMP nuevo campeón: ${esc(STRAT.get(best.id).name)} · mín. fiable ${pc(best.lb)}`); tape('a', 'CHAMP', STRAT.get(best.id).name);
+    save();
+  }
+}
+setInterval(pickChampion, 10000);
+
+function setRunning(v) {
+  running = v; if (v && !startedAt) startedAt = Date.now();
+  if (v) { if (!ws) connect(); log('g', 'PLAY · bot en marcha'); }
+  else { if (ws) { ws.onclose = null; ws.close(); ws = null; } log('a', 'STOP · no entra en tokens nuevos; las posiciones abiertas se siguen gestionando'); }
+}
+
+// ===================== Pintado =====================
+let hourMetric = 'tokens';
+$('hlab').innerHTML = Array.from({ length: 24 }, (_, i) => `<span>${i}</span>`).join('');
+function spark(arr, col) {
+  const mx = Math.max(1e-9, ...arr), W = 200, H = 26;
+  const pts = arr.map((v, i) => `${(i / Math.max(1, arr.length - 1) * W).toFixed(1)},${(H - 2 - v / mx * (H - 4)).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6"/></svg>`;
+}
+const last30 = k => { const m = minute(), s = series[k]; return Array.from({ length: 30 }, (_, i) => s.get(m - 29 + i) || 0); };
+function drawChart() {
+  const s = $('chart'), W = s.clientWidth, H = s.clientHeight; if (!W || !H) return;
+  const tr = data.champTrades, pts = [0]; for (const t of tr) pts.push(pts.at(-1) + CFG.sizeEur * t.net / 100);
+  if (pts.length < 2) { s.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="#4b5a78" font-family="JetBrains Mono">la curva aparece con las operaciones del campeón</text>`; return; }
+  const lo = Math.min(0, ...pts), hi = Math.max(0.2, ...pts), pad = 8, x = i => pad + (W - 2 * pad) * i / (pts.length - 1), y = v => pad + (H - 2 * pad) * (1 - (v - lo) / (hi - lo || 1));
+  const path = pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(''), col = pts.at(-1) >= 0 ? '#3ef08a' : '#ff4d6d';
+  s.innerHTML = `<line x1="${pad}" x2="${W - pad}" y1="${y(0)}" y2="${y(0)}" stroke="#1a2740" stroke-dasharray="4 4"/><path d="${path}L${x(pts.length - 1)},${y(0)}L${x(0)},${y(0)}Z" fill="${col}" opacity=".1"/><path d="${path}" fill="none" stroke="${col}" stroke-width="2"/>`
+    + tr.map((t, i) => `<circle cx="${x(i + 1).toFixed(1)}" cy="${y(pts[i + 1]).toFixed(1)}" r="2.6" fill="${t.net > 0 ? '#3ef08a' : '#ff4d6d'}"/>`).join('');
+}
+const chartObs = new ResizeObserver(drawChart); chartObs.observe($('chart'));
+
+// Constelación: cada lanzamiento es un punto en espiral, color según la decisión
+const cv = $('const'), cx = cv.getContext('2d');
+function drawConst(ts) {
+  const W = cv.clientWidth, H = cv.clientHeight, dpr = devicePixelRatio || 1;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0); cx.clearRect(0, 0, W, H);
+  const cxm = W / 2, cym = H / 2, Rm = Math.min(W, H) / 2 - 16, rot = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : ts / 60000;
+  for (let k = 1; k <= 4; k++) { cx.beginPath(); cx.arc(cxm, cym, Rm * k / 4, 0, Math.PI * 2); cx.strokeStyle = 'rgba(76,201,255,.07)'; cx.stroke(); }
+  const col = { entry: '#3ef08a', veto: '#ff4d6d', skip: '#ffb547', eval: '#4cc9ff' };
+  constel.forEach((t, i) => {
+    const r = Rm * (0.12 + 0.88 * i / 160), a = t.ang + rot + i * 0.38;
+    const x = cxm + r * Math.cos(a), y = cym + r * Math.sin(a), size = 2 + Math.min(7, Math.sqrt(t.f?.buyVol || 0) * 2.2);
+    cx.beginPath(); cx.moveTo(cxm, cym); cx.lineTo(x, y); cx.strokeStyle = (col[t.state] || '#4cc9ff') + '18'; cx.stroke();
+    cx.beginPath(); cx.arc(x, y, size, 0, Math.PI * 2); cx.fillStyle = col[t.state] || '#4cc9ff'; cx.shadowColor = cx.fillStyle; cx.shadowBlur = i < 6 ? 14 : 4; cx.fill(); cx.shadowBlur = 0;
+    if (i < 5) { cx.fillStyle = '#dbe6ff'; cx.font = '600 11px JetBrains Mono'; cx.fillText('$' + t.symbol, x + size + 4, y + 4); }
+  });
+  cx.beginPath(); cx.arc(cxm, cym, 6, 0, Math.PI * 2); cx.fillStyle = '#4cc9ff'; cx.shadowColor = '#4cc9ff'; cx.shadowBlur = 20; cx.fill(); cx.shadowBlur = 0;
+  requestAnimationFrame(drawConst);
+}
+requestAnimationFrame(drawConst);
+
+let lastTape = '';
+function render() {
+  const noConn = running && startedAt && Date.now() - startedAt > 15000 && (!wsOk || (!rpcCalls && Date.now() - startedAt > 60000));
+  $('live').className = 'live' + (running && !noConn ? ' on' : ''); $('liveTxt').textContent = noConn ? 'SIN CONEXIÓN' : running ? 'EN VIVO' : 'PAUSA';
+  $('warn').style.display = noConn ? 'block' : 'none';
+  $('play').disabled = running; $('stop').disabled = !running;
+  $('clock').firstChild.textContent = new Date().toISOString().slice(11, 19) + ' UTC';
+  $('clockMad').textContent = madrid(Date.now(), { hour: '2-digit', minute: '2-digit' }) + ' Madrid';
+  const st = Object.values(data.stats), closed = st.reduce((s, x) => s + x.n, 0), wins = st.reduce((s, x) => s + x.wins, 0), sum = st.reduce((s, x) => s + x.sum, 0);
+  $('kSeen').textContent = data.totals.seen; $('kVeto').textContent = data.totals.veto; $('kEntry').textContent = data.totals.entry; $('kClosed').textContent = closed;
+  // Tasa de acierto global
+  if (closed) {
+    const wr = 100 * wins / closed; $('hr').textContent = Math.round(wr) + '%'; $('hr').style.color = wr >= 50 ? 'var(--g)' : wr >= 25 ? 'var(--a)' : 'var(--r)';
+    $('hrSub').textContent = `${closed} operaciones cerradas entre ${STRATS.length} estrategias desde ${madrid(data.since, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+    $('wins').textContent = wins; $('losses').textContent = closed - wins; $('avg').textContent = eur(sum / closed / 100); $('avg').style.color = sum >= 0 ? 'var(--g)' : 'var(--r)';
+  }
+  const R = data.reasons, tot = (R.objetivo || 0) + (R.stop || 0) + (R.tiempo || 0) + (R['sin actividad'] || 0);
+  if (tot) {
+    const p = k => 100 * k / tot, a = p(R.objetivo || 0), b = p(R.stop || 0), c = 100 - a - b;
+    $('bar3').innerHTML = `<i style="width:${a}%;background:var(--g)"></i><i style="width:${b}%;background:var(--r)"></i><i style="width:${c}%;background:var(--a)"></i>`;
+    $('pTP').textContent = Math.round(a) + '%'; $('pSL').textContent = Math.round(b) + '%'; $('pT').textContent = Math.round(c) + '%';
+  }
+  // Campeón
+  const ch = data.champ ? scoreOf(data.champ.id) : null;
+  if (ch) {
+    const s = data.stats[ch.id], ok = ch.lb > 0;
+    $('chName').textContent = STRAT.get(ch.id).name; $('chBadge').textContent = ok ? 'GANA CON MARGEN FIABLE' : 'EL MEJOR, PERO AÚN PIERDE'; $('chBadge').style.color = ok ? 'var(--g)' : 'var(--r)';
+    $('cWr').textContent = Math.round(ch.wr) + '%'; $('cAvg').textContent = eur(ch.mean / 100); $('cN').textContent = s.n; $('cPnl').textContent = eur(s.sum / 100); $('cPnl').style.color = s.sum >= 0 ? 'var(--g)' : 'var(--r)';
+    $('chWhy').textContent = `Elegido por sus últimas ${ch.n} operaciones: media ${pc(ch.mean)}, mínimo fiable ${pc(ch.lb)}. ${ok ? 'Único caso en que tendría sentido probar con dinero real y importes mínimos.' : 'Mientras el mínimo fiable sea negativo, no debe usarse con dinero real.'}`;
+  } else {
+    const maxN = Math.max(0, ...STRATS.map(s => data.stats[s.id].recent.length));
+    $('chWhy').textContent = `Faltan ${Math.max(0, CFG.minN - maxN)} operaciones de la estrategia más activa para elegir campeón (mínimo ${CFG.minN}).`;
+  }
+  drawChart();
+  // Horas
+  const Hs = data.hours, val = h => hourMetric === 'tokens' ? h.tokens : hourMetric === 'veto' ? (h.evald >= 5 ? 100 * h.veto / h.evald : 0) : (h.done >= 5 ? 100 * h[hourMetric] / h.done : 0);
+  const vals = Hs.map(val), mx = Math.max(1e-9, ...vals);
+  const best = ['rug', 'veto'].includes(hourMetric) ? [] : vals.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]).slice(0, 4).filter(x => x[0] > 0).map(x => x[1]);
+  $('hours').innerHTML = vals.map((v, i) => `<div class="${best.includes(i) ? 'hot' : ''}" style="height:${(100 * v / mx).toFixed(1)}%" title="${i}:00 · ${hourMetric === 'tokens' ? v : v.toFixed(1) + '%'}"></div>`).join('');
+  const days = (Date.now() - data.since) / 86400e3;
+  $('hoursNote').textContent = `${days < 1 ? 'Menos de 1 día' : days.toFixed(1) + ' días'} de datos.${best.length ? ' Mejores horas: ' + [...best].sort((a, b) => a - b).map(h => h + ':00').join(', ') + '.' : ''} Los % necesitan 5+ tokens por hora.`;
+  // Observables
+  const L = last30('launches'), E = last30('evald'), V = last30('veto'), I = last30('inflow'), S = last30('score'), B = last30('bundle'), C = last30('serial');
+  const sumA = a => a.reduce((s, x) => s + x, 0), ratio = (a, b) => sumA(b) ? 100 * sumA(a) / sumA(b) : 0;
+  const obs = [
+    { t: 'LANZAMIENTOS', d: 'tokens nuevos / min', v: (sumA(L) / 30).toFixed(1), s: L, c: '#4cc9ff' },
+    { t: 'DINERO ENTRANDO', d: 'SOL comprados en sus primeros 20 s', v: sumA(I).toFixed(1), s: I, c: '#3ef08a' },
+    { t: 'TASA DE VETO', d: '% de tokens con algún veto', v: ratio(V, E).toFixed(0) + '%', s: V, c: '#ff4d6d' },
+    { t: 'PRIMER BLOQUE', d: '% con >15% comprado al lanzar', v: ratio(B, E).toFixed(0) + '%', s: B, c: '#ffb547' },
+    { t: 'CREADORES EN SERIE', d: '% de creadores con varios lanzamientos', v: ratio(C, E).toFixed(0) + '%', s: C, c: '#a78bfa' },
+    { t: 'RIESGO MEDIO', d: 'puntuación 0–100 (100 = limpio)', v: sumA(E) ? (sumA(S) / sumA(E)).toFixed(0) : '–', s: S.map((x, i) => E[i] ? x / E[i] : 0), c: '#4cc9ff' },
+  ];
+  $('obs').innerHTML = obs.map(o => `<div class="ob" style="border-left-color:${o.c}"><span class="t">${o.t}</span><span class="v" style="color:${o.c}">${o.v}</span><span class="d">${o.d}</span>${spark(o.s, o.c)}</div>`).join('');
+  $('constTxt').textContent = `${constel.length} tokens · ${tokens.size} en seguimiento`;
+  // Pila de decisiones
+  if (stack.length) $('stack').innerHTML = stack.map(d => `<div class="dc ${d.state}"><span class="lab">${d.state === 'entry' ? 'ENTRADA' : d.state === 'veto' ? 'VETO' : 'SIN ENTRADA'}</span><span class="nm">$${esc(d.symbol)}${d.n ? ` · ${d.n} estrategias` : ''}</span><span class="sc">${d.score}</span><span class="why">${esc(d.why)}</span></div>`).join('');
+  // Aspirantes
+  const sc = STRATS.map(s => scoreOf(s.id)).filter(Boolean).sort((a, b) => (b.n >= 10) - (a.n >= 10) || b.lb - a.lb).slice(0, 15);
+  $('nStrat').textContent = `${STRATS.length} estrategias · top 15`;
+  if (sc.length) $('table').innerHTML = sc.map(x => `<tr class="${data.champ?.id === x.id ? 'ch' : ''}"><td>${esc(STRAT.get(x.id).name)}</td><td>${data.stats[x.id].n}</td><td>${Math.round(x.wr)}%</td><td style="color:${x.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.mean / 100)}</td><td style="color:${x.lb >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.lb / 100)}</td><td>${eur(data.stats[x.id].sum / 100)}</td></tr>`).join('');
+  // Cinta de operaciones
+  if (data.last.length) $('trades').innerHTML = data.last.map(o => `<div class="tt"><span class="s" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${o.net > 0 ? 'ACIERTO' : 'FALLO'}</span><span><b>$${esc(o.symbol)}</b> · ${o.reason}</span><span class="n" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${pc(o.net)}</span><span class="w">${esc(STRAT.get(o.id)?.name || o.id)} · ${madrid(o.ts, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('');
+  $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY';
+  const tp = tapeItems.join(' &nbsp;·&nbsp; ');
+  if (tp && tp !== lastTape) { lastTape = tp; $('tape').innerHTML = tp + ` &nbsp;·&nbsp; <b class="c">RPC</b> ${rpcCalls} lecturas`; }
+}
+
+// ===================== Botones =====================
+$('play').onclick = () => setRunning(true);
+$('stop').onclick = () => setRunning(false);
+for (const b of $('hsel').querySelectorAll('button')) b.onclick = () => { hourMetric = b.dataset.v; for (const x of $('hsel').children) x.classList.toggle('on', x === b); render(); };
+$('copy').onclick = async () => {
+  const rows = ['estrategia,ops,acierto_pct,eur_op,minimo_fiable,total_eur', ...STRATS.map(s => { const x = scoreOf(s.id), st = data.stats[s.id]; return [JSON.stringify(s.name), st.n, x ? x.wr.toFixed(1) : '', x ? (x.mean / 100).toFixed(4) : '', x ? (x.lb / 100).toFixed(4) : '', (st.sum / 100).toFixed(2)].join(','); }),
+    '', 'hora,tokens,pct_2x,pct_hundidos,pct_vetados', ...data.hours.map((h, i) => [i, h.tokens, h.done ? (100 * h.x2 / h.done).toFixed(1) : '', h.done ? (100 * h.rug / h.done).toFixed(1) : '', h.evald ? (100 * h.veto / h.evald).toFixed(1) : ''].join(','))].join('\n');
+  try { await navigator.clipboard.writeText(rows); $('copy').textContent = 'Copiado ✓'; } catch { $('copy').textContent = 'No se pudo copiar'; }
+  setTimeout(() => $('copy').textContent = 'Copiar resumen CSV', 2000);
+};
+window.__arena = { data, STRATS, scoreOf, tokens: () => tokens.size };
+setInterval(render, 1000); render();
+}
+</script>
+</body>
+</html>
