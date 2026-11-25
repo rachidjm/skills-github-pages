@@ -10,6 +10,7 @@ En vivo: https://superb-caramel-d31fc2.netlify.app (Netlify publica solo la rama
 - No tocar los ids de estrategias existentes (`data.stats` va por id). Las nuevas se añaden, no se renombran.
 - Nada de mirar el futuro: un filtro solo puede usar datos disponibles en el momento de entrar.
 - Los arreglos se prueban como estrategias NUEVAS en el torneo; nunca se "mejora" una estrategia cambiando la existente.
+- Nunca abras ni ejecutes el bot (la web de Netlify, sniper-lab/index.html ni ninguna copia) en un navegador, vista previa o servidor local mientras Rachid lo tiene abierto. El bot de Rachid corre en su Chrome y dos bots desde la misma conexión hacen que PumpPortal y el nodo de Solana corten el suyo. Para probar cambios, comprueba solo la sintaxis con node y, si necesitas ver datos, pide a Rachid el export ("Descargar datos del bot"). Si algún día hace falta ejecutar el bot para probarlo, pregunta antes y espera su permiso.
 
 ## Estructura
 - `sniper-lab/index.html` — todo el bot (HTML + CSS + un `<script>`). Secciones marcadas con `// ===================== … =====================`:
