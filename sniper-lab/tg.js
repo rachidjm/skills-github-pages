@@ -13,8 +13,9 @@
   const SKIP = new Set(['So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY9NL8UdbTXkvVb1', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P', 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA', 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', '11111111111111111111111111111111']);
 
   // ---------- estado persistente ----------
-  let st = { calls: [], chats: {}, last: {}, backfilled: false };
+  let st = { calls: [], chats: {}, last: {}, backfilled: false, sugg: {} };
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.calls) st = { ...st, ...s }; } catch {}
+  st.sugg ??= {};
   const save = () => { try { st.calls = st.calls.filter(c => Date.now() - c.at < 7 * 864e5).slice(-4000); localStorage.setItem(KEY, JSON.stringify(st)); } catch {} };
   setInterval(save, 15000);
   let auth = {}; try { auth = JSON.parse(localStorage.getItem(AUTH)) || {}; } catch {}
@@ -136,8 +137,8 @@
       log('g', `TG · conectado como ${esc(me.username ? '@' + me.username : me.firstName || 'cuenta')}`);
       const { NewMessage } = window.GramJS;
       client.addEventHandler(ev => { const m = ev.message; if (!m || ev.isPrivate) return; const id = String(m.chatId); onMsg(id, m, true); }, new NewMessage({}));
-      await refreshDialogs(); if (!st.backfilled) runBackfill();
-      setInterval(pollDialogs, 120e3);
+      await refreshDialogs(); if (!st.backfilled || !st.hist2) runBackfill();
+      setInterval(pollDialogs, 120e3); setInterval(resolveSugg, 5 * 60e3); setTimeout(resolveSugg, 30e3);
     } catch (e) { err = e.message || String(e); status = 'off'; asking = null; try { await client?.disconnect(); } catch {} client = null; if (/AUTH_KEY|SESSION|ya no vale/i.test(err)) { delete auth.session; saveAuth(); } }
     ui();
   }
@@ -145,6 +146,26 @@
     if (!st.chats[chatId]) { const d = dialogs.find(x => x.id === chatId); st.chats[chatId] = { title: d?.title || chatId }; }
     st.last[chatId] = Math.max(st.last[chatId] || 0, m.id);
     addCall(chatId, st.chats[chatId].title, m, live);
+    suggest(chatId, m);
+  }
+  // Canales que tus comunidades reenvían o enlazan (y en los que aún no estás)
+  function suggest(chatId, m) {
+    const add = (key, info) => { const e = st.sugg[key] || (st.sugg[key] = { n: 0, from: [], ...info }); e.n++; e.last = Date.now(); if (!e.from.includes(chatId) && e.from.length < 20) e.from.push(chatId); if (info.title && !e.title) e.title = info.title; };
+    const fw = m.fwdFrom, cid = fw?.fromId?.channelId;
+    if (cid) { const id = '-100' + String(cid); if (id !== chatId) add('c' + cid, { cid: String(cid), title: fw.fromName || null }); }
+    let text = m.message || ''; for (const e of m.entities || []) if (e.url) text += ' ' + e.url;
+    for (const x of text.matchAll(/t\.me\/(\+[A-Za-z0-9_-]{8,}|joinchat\/[A-Za-z0-9_-]{8,}|[A-Za-z][A-Za-z0-9_]{4,31})(?![A-Za-z0-9_])/g)) {
+      const h = x[1]; if (/^(s|c|share|addstickers|proxy|socks|iv|bot)$/i.test(h) || /bot$/i.test(h)) continue;
+      add('u' + h.toLowerCase(), { user: h.startsWith('+') || h.startsWith('joinchat') ? null : h, link: 'https://t.me/' + h });
+    }
+  }
+  let resolvingSugg = false;
+  async function resolveSugg() {
+    if (!client || resolvingSugg) return; resolvingSugg = true;
+    try {
+      const todo = Object.entries(st.sugg).filter(([k, e]) => k[0] === 'c' && !e.link && !e.fail).sort((a, b) => b[1].n - a[1].n).slice(0, 10);
+      for (const [, e] of todo) { try { const ent = await client.getEntity(Number('-100' + e.cid)); e.title = ent.title || e.title; if (ent.username) { e.user = ent.username; e.link = 'https://t.me/' + ent.username; } else e.fail = true; } catch { e.fail = true; } await sleep(1500); }
+    } finally { resolvingSugg = false; }
   }
   async function refreshDialogs() {
     const ds = await client.getDialogs({ limit: 300 });
@@ -154,9 +175,14 @@
   async function pollDialogs() {
     if (!client || polling) return; polling = true;
     try { await refreshDialogs();
-      for (const d of dialogs) { const last = st.last[d.id] || 0; if (!last) { st.last[d.id] = d.top; continue; } if (d.top <= last) continue;
+      for (const d of dialogs) { const last = st.last[d.id] || 0; if (!last) { await readHistory(d); log('c', `TG · nueva comunidad: ${esc(d.title)} · leídas sus últimas 24 h`); continue; } if (d.top <= last) continue;
         const ms = await client.getMessages(d.entity, { minId: last, limit: 30 }).catch(() => []); for (const m of [...ms].reverse()) onMsg(d.id, m, true); await sleep(400); }
     } catch {} finally { polling = false; }
+  }
+  async function readHistory(d) {
+    const since = Date.now() / 1000 - 24 * 3600;
+    try { const ms = await client.getMessages(d.entity, { limit: 60 }); for (const m of [...ms].reverse()) if (m.date >= since) onMsg(d.id, m, false); } catch {}
+    st.last[d.id] = Math.max(st.last[d.id] || 0, d.top || 1); await sleep(500);
   }
   async function runBackfill() {
     backfill = { done: 0, total: dialogs.length, on: true }; ui();
@@ -165,7 +191,7 @@
       try { const ms = await client.getMessages(d.entity, { limit: 60 }); for (const m of [...ms].reverse()) if (m.date >= since) onMsg(d.id, m, false); st.last[d.id] = Math.max(st.last[d.id] || 0, d.top); } catch {}
       backfill.done++; await sleep(500);
     }
-    backfill.on = false; st.backfilled = true; save();
+    backfill.on = false; st.backfilled = true; st.hist2 = true; save();
     log('c', `TG · historial de 24 h leído: ${st.calls.length} llamadas en ${dialogs.length} comunidades · puntuándolas con velas reales`);
     resolveLoop();
   }
@@ -213,6 +239,10 @@
     const rk = ranking();
     $('tgRankTxt').textContent = rk.length ? `${rk.length} comunidades · fiable desde ${SIM.minN} llamadas` : 'sin datos';
     $('tgRank').innerHTML = rk.length ? rk.slice(0, 60).map((r, i) => `<tr${r.n >= SIM.minN && r.lb > 0 ? ' class="ch"' : ''}><td>${r.n >= SIM.minN ? i + 1 : '·'}</td><td>${esc(r.title)}</td><td>${r.calls}${r.n < r.calls ? ` <span style="color:var(--dim)">(${r.n})</span>` : ''}</td><td>${r.n ? Math.round(r.wr) + '%' : '–'}</td><td style="color:${r.n ? col(r.mean) : ''}">${r.n ? pc(r.mean) : '–'}</td><td>${r.n ? Math.round(r.x2) + '%' : '–'}</td><td>${r.n ? Math.round(r.first) + '%' : '–'}</td><td>${r.n ? usd(r.mcap) : '–'}</td><td style="color:${r.n >= SIM.minN ? col(r.lb) : 'var(--dim)'}">${r.n >= SIM.minN ? pc(r.lb) : 'faltan datos'}</td></tr>`).join('') : '<tr><td colspan="9" style="color:var(--soft)">Sin llamadas todavía.</td></tr>';
+    const mine = new Set(dialogs.map(d => d.id)), myUsers = new Set(dialogs.map(d => (d.entity?.username || '').toLowerCase()).filter(Boolean));
+    const sg = Object.entries(st.sugg).map(([k, e]) => ({ k, ...e })).filter(e => !(e.cid && mine.has('-100' + e.cid)) && !(e.user && myUsers.has(e.user.toLowerCase())) && (e.link || e.title)).sort((a, b) => b.from.length - a.from.length || b.n - a.n).slice(0, 30);
+    if ($('sgList')) { $('sgTxt').textContent = sg.length ? `${sg.length} canales · ordenados por cuántas de tus comunidades los mencionan` : 'desde tus grupos';
+      if (sg.length) $('sgList').innerHTML = sg.map(e => `<div class="tt"><span class="s" style="color:var(--c)">${e.from.length} grupo${e.from.length > 1 ? 's' : ''}</span><span><b>${esc(e.title || (e.user ? '@' + e.user : 'invitación privada'))}</b>${e.user && e.title ? ` · @${esc(e.user)}` : ''}</span><span class="n" style="color:var(--soft)">${e.n}×</span><span class="w">${e.link ? `<a href="${esc(e.link)}" target="_blank" rel="noopener" style="color:var(--c)">${esc(e.link)}</a>` : 'canal privado o sin enlace público'}</span></div>`).join(''); }
     const recent = [...st.calls].filter(c => c.status !== 'nada').sort((a, b) => b.at - a.at).slice(0, 25);
     $('tgCalls').innerHTML = recent.length ? recent.map(c => `<div class="tt"><span class="s" style="color:${c.status === 'ok' ? col(c.net) : 'var(--c)'}">${c.status === 'ok' ? (c.net > 0 ? 'ACIERTO' : 'FALLO') : 'EN CURSO'}</span><span><b>${c.sym ? '$' + esc(c.sym) : esc(c.mint.slice(0, 4) + '…' + c.mint.slice(-4))}</b> · ${esc(st.chats[c.chat]?.title || c.chat)}${c.first ? ' · primera en llamarla' : ''}</span><span class="n" style="color:${c.status === 'ok' ? col(c.net) : 'var(--soft)'}">${c.status === 'ok' ? pc(c.net) : '…'}</span><span class="w">${when(c.at)}${c.status === 'ok' ? ` · ${c.reason} · máx ${c.peak}x · mcap ${usd(c.mcap0)}${c.ageMin != null ? ` · moneda con ${c.ageMin} min` : ''}` : ''} · <span style="user-select:all">${esc(c.mint)}</span></span></div>`).join('') : '<div class="sub">Sin llamadas todavía.</div>';
   }

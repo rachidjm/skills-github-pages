@@ -47,6 +47,10 @@ button:disabled{opacity:.35;cursor:default}
 .r3{grid-template-columns:minmax(0,5fr) minmax(0,4fr) minmax(0,4fr)}
 .r4{grid-template-columns:minmax(0,4fr) minmax(0,8fr)}
 [hidden]{display:none!important}
+*{scrollbar-width:thin;scrollbar-color:#24324f transparent}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:#24324f;border-radius:8px;border:2px solid transparent;background-clip:padding-box}::-webkit-scrollbar-thumb:hover{background:#3a5a9a;background-clip:padding-box;border:2px solid transparent}
+.r5{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}
 .tgf{flex-wrap:nowrap;align-items:flex-end}.tgf label{flex:1 1 0;min-width:0}.tgf input{width:100%;min-width:0}.tgf button{flex:none;min-height:42px;padding:0 22px}
 @media(max-width:700px){.tgf{flex-wrap:wrap}.tgf label{flex-basis:100%}}
 .pn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;position:relative}
@@ -149,7 +153,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 @media(prefers-reduced-motion:reduce),(hover:none){.pn{transform:none!important}}
 .toast{position:fixed;left:50%;top:84px;transform:translate(-50%,-20px);opacity:0;pointer-events:none;z-index:9;background:#4f8dff;color:#fff;font:700 14px Inter;padding:12px 18px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.5);transition:.25s;max-width:calc(100vw - 24px)}
 .toast.on{opacity:1;transform:translate(-50%,0)}
-@media(max-width:1100px){.r1,.r2,.r3,.r4,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:1100px){.r1,.r2,.r3,.r4,.r5,.r2b,.hero{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:560px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.settings label,.settings input,.settings select{width:100%;max-width:none}}
 @media(max-width:560px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hlab span:nth-child(odd){visibility:hidden}.counters strong{font-size:15px}}
 </style>
@@ -314,6 +318,18 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
       <div class="scroll" id="tgCalls"><div class="sub">Sin llamadas todavía.</div></div>
     </section>
   </div>
+  <div class="row r5">
+    <section class="pn">
+      <h2>TRADERS TOP <em id="wTxt">calculado on-chain</em></h2>
+      <div class="kpis"><div>CARTERAS<strong id="wK1">0</strong></div><div>MONEDAS PUNTUADAS<strong id="wK2">0</strong></div><div>EN EL TOP<strong id="wK3">0</strong></div><div>ENTRAN AHORA<strong id="wK4">0</strong></div></div>
+      <div class="scroll" style="margin-top:10px"><table><thead><tr><th>#</th><th>Cartera</th><th>Monedas</th><th>Llega a 2x</th><th>Llega a 5x</th><th>Múltiplo típico</th><th>Días con aciertos</th><th>Fiable</th></tr></thead><tbody id="wRank"><tr><td colspan="8" style="color:var(--soft)">Aprendiendo: cada moneda que termina puntúa a sus primeros compradores. Hace falta que una cartera aparezca en 4+ monedas.</td></tr></tbody></table></div>
+      <div class="sub" style="margin-top:8px">Pump.fun no deja leer su ranking desde fuera, así que el bot hace el suyo: cada cartera que compra en los primeros segundos se puntúa con lo máximo que sube la moneda en los 15 min siguientes. "Fiable" es el acierto mínimo creíble con los datos que hay; desde un 30% la cartera cuenta como trader top para las estrategias de confluencia.</div>
+    </section>
+    <section class="pn">
+      <h2>COMUNIDADES SUGERIDAS <em id="sgTxt">desde tus grupos</em></h2>
+      <div class="scroll" id="sgList"><div class="sub">Cuando Telegram esté conectado, aquí salen los canales que más reenvían o enlazan tus comunidades de llamadas y en los que aún no estás.</div></div>
+    </section>
+  </div>
   </div>
 <div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button></div>
 
@@ -322,7 +338,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 // ===================== Configuración =====================
 const CFG = { sizeEur: 1, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
   feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
-  minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60 };   // decide cuando hay datos suficientes (máx. 2 min)
+  minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 15 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
 let solEur = 130;
 fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eur').then(r => r.json()).then(j => { if (j?.solana?.eur) solEur = j.solana.eur; }).catch(() => {});
@@ -380,6 +396,11 @@ const FILTERS = [
   { id: 'xbuzz', txt: 'mencionado en X por cuentas con 1.000+ seguidores', f: x => (x.xBig || 0) >= 1 },
   // Nuevo: llamadas de comunidades de Telegram
   { id: 'tgcall', txt: 'llamada en Telegram antes de entrar', f: x => (x.tgCalls || 0) >= 1 },
+  // Nuevos: traders top (ranking propio calculado on-chain) y confluencia de fuentes
+  { id: 'smart', txt: '1+ trader top entre los primeros compradores', f: x => (x.smart || 0) >= 1 },
+  { id: 'smart2', txt: '2+ traders top entre los primeros compradores', f: x => (x.smart || 0) >= 2 },
+  { id: 'smart_clean', txt: 'trader top y sin vetos', f: x => (x.smart || 0) >= 1 && !x.vetoes.length },
+  { id: 'confluence', txt: 'confluencia: trader top + sin vetos + Telegram o X', f: x => (x.smart || 0) >= 1 && !x.vetoes.length && ((x.tgCalls || 0) >= 1 || !!x.xTrend || (x.xBig || 0) >= 1) },
 ];
 const STRATS = [];
 for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
@@ -404,21 +425,21 @@ let xState = { ok: null, used: 0, cap: 0, err: '', lastAt: 0 };
 function xWords(text) { return [...new Set((text.toLowerCase().match(/\$?[a-z][a-z0-9]{2,19}/g) || []).map(w => w.replace(/^\$/, '')).filter(w => !STOP.has(w)))]; }
 async function xFetch(params) { const r = await fetch(X_URL + '?' + new URLSearchParams(params)); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); xState.used = d.used ?? xState.used; xState.cap = d.cap ?? xState.cap; return d; }
 async function xTrends() {
-  if (!X_URL || !running) return;
+  if (!X_URL || !running || xState.paused) return;
   try {
     const d = await xFetch({ mode: 'trend' }), now = Date.now();
     for (const p of d.posts || []) for (const w of xWords(p.text)) { const e = xTrend.get(w) || { n: 0, first: now, last: now }; e.n += 1 + Math.min(5, (p.likes || 0) / 20); e.last = now; xTrend.set(w, e); }
     for (const [w, e] of xTrend) if (now - e.last > 3 * 3600e3) xTrend.delete(w);
     xState.ok = true; xState.err = ''; xState.lastAt = now;
     if (!d.cached) log('c', `X · ${(d.posts || []).length} posts leídos · tendencias: ${topTrends(5).map(([w]) => w).join(', ')}`);
-  } catch (e) { xState.ok = false; xState.err = e.message; log('a', `X · ${esc(e.message)}`); }
+  } catch (e) { xState.ok = false; xState.err = e.message; if (/402|Payment/i.test(e.message)) { xState.paused = true; xState.err = 'sin saldo en X (pausado hasta recargar la página)'; } log('a', `X · ${esc(xState.err)}`); }
 }
 const topTrends = n => [...xTrend.entries()].filter(([, e]) => e.n >= 2).sort((a, b) => b[1].n - a[1].n).slice(0, n);
 setInterval(xTrends, 10 * 60e3); setTimeout(xTrends, 5000);
 // ¿El nombre o símbolo del token coincide con algo que se mueve en X ahora?
 function xTrendMatch(t) { const hot = new Map(topTrends(60)); for (const w of xWords((t.name || '') + ' ' + t.symbol)) if (hot.has(w)) return { w, ageMin: Math.round((Date.now() - hot.get(w).first) / 60000) }; return null; }
 async function xCheckToken(t) {
-  if (!X_URL || !t.f) return;
+  if (!X_URL || !t.f || xState.paused) return;
   try { const d = await xFetch({ mode: 'token', sym: t.symbol, mint: t.mint }); const ps = d.posts || []; t.f.xMentions = ps.length; t.f.xBig = ps.filter(p => (p.followers || 0) >= 1000).length; t.f.xChecked = true;
     if (ps.length) log('c', `X · $${esc(t.symbol)} mencionado ${ps.length} veces${t.f.xBig ? ` (${t.f.xBig} por cuentas con 1.000+ seguidores)` : ''}`);
   } catch (e) { xState.err = e.message; }
@@ -523,6 +544,7 @@ async function evaluate(mint) {
     const similar = grp.filter(x => med > 0 && Math.abs(x.sol - med) <= 0.3 * med);
     pack = Math.max(pack, similar.length);
   }
+  t.early = firsts.slice(0, 30).map(x => ({ u: x.user, m: x.mcap })); t.peakT = Math.max(0, ...trades.map(x => x.mcap || 0));
   const f = {
     uniqueBuyers: byUser.size, buyVol: +buyVol.toFixed(3), devSold: sells.some(x => x.user === t.creator), devBuy: t.devBuy,
     creatorTx: (csigs || []).length, creatorLaunches: t.creatorLaunches, bundleBuys: createSlot ? ext.filter(x => x.slot === createSlot).length : 0,
@@ -551,6 +573,8 @@ async function evaluate(mint) {
     return;
   }
   f.tgCalls = t.tgCalls || 0;
+  f.smartList = t.early.filter(e => TOP.has(e.u)).map(e => e.u); f.smart = f.smartList.length;
+  if (f.smart) log('g', `TOP $${esc(t.symbol)} · ${f.smart} trader${f.smart > 1 ? 's' : ''} top entre los primeros compradores`);
   t.f = f; t.decAt = Date.now(); t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
   const H = data.hours[t.hour]; H.vol += buyVol; H.evald++; if (v.length) H.veto++;
   bump('evald'); bump('inflow', buyVol); bump('score', f.score); if (v.length) bump('veto'); if (f.slot0Pct > 0.15) bump('bundle'); if (t.creatorLaunches > 1) bump('serial');
@@ -614,12 +638,15 @@ function record(id, net, t, reason, now) {
 }
 function finishToken(t) {
   const H = data.hours[t.hour]; H.done++; if (t.max / t.m20 >= 2) H.x2++; if (t.min / t.m20 <= 0.5) H.rug++;
+  scoreWallets(t);
   t.phase = 'done'; tokens.delete(t.mint);
 }
 
 // ===================== Lectura de precios (curva on-chain, 10 cuentas por llamada) =====================
 async function poll() {
-  const list = [...tokens.values()].filter(t => t.phase === 'tracking');
+  const nowL = Date.now(), light = t => !t.pos.size && nowL - (t.decAt || nowL) > (CFG.confirmSec + 70) * 1000;
+  const list = [...tokens.values()].filter(t => t.phase === 'tracking' && (!light(t) || nowL - (t.lp || 0) > 15000));
+  for (const t of list) t.lp = nowL;
   for (let i = 0; i < list.length; i += 10) {
     const chunk = list.slice(i, i + 10);
     let res; try { res = await rpc('getMultipleAccounts', [chunk.map(t => t.bc), { encoding: 'base64' }], true); } catch { continue; }
@@ -633,12 +660,41 @@ async function poll() {
       const inactive = now - t.lastChange > CFG.inactiveMin * 60e3;
       settle(t, now, inactive);
       const age = (now - t.createdAt) / 1000, pending = running && now - (t.decAt || now) < (CFG.confirmSec + 70) * 1000 && !inactive;
-      if (!t.pos.size && (!pending || age > CFG.trackMaxMin * 60)) finishToken(t);
+      const watch = !inactive && age < CFG.watchMin * 60;   // se sigue 15 min para puntuar a los primeros compradores
+      if (!t.pos.size && ((!pending && !watch) || age > CFG.trackMaxMin * 60)) finishToken(t);
     });
   }
 }
 let polling = false;
 setInterval(() => { if (polling) return; polling = true; poll().catch(() => {}).finally(() => { polling = false; }); }, CFG.pollMs);
+
+// ===================== Fuente 4: traders top (ranking propio, calculado on-chain) =====================
+// Pump.fun no deja leer su ranking desde otra web, así que lo calculamos: cada cartera que compra en los primeros
+// segundos se puntúa con lo que sube la moneda en los 15 min siguientes. Solo cuenta el pasado (sin trampas).
+const WKEY = 'snlab_wallets_v1';
+let W = {}; try { W = JSON.parse(localStorage.getItem(WKEY)) || {}; } catch {}
+const dayKey = ts => Math.floor(ts / 864e5);
+function wSave() { try { const now = Date.now(); let e = Object.entries(W).filter(([, w]) => w.n >= 2 || now - w.last < 48 * 3600e3); if (e.length > 15000) e = e.sort((a, b) => b[1].last - a[1].last).slice(0, 15000); W = Object.fromEntries(e); localStorage.setItem(WKEY, JSON.stringify(W)); } catch {} }
+setInterval(wSave, 30000);
+const wilson = (h, n, z = 1.28) => { if (!n) return 0; const p = h / n, d = 1 + z * z / n; return (p + z * z / (2 * n) - z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d; };
+let TOP = new Set(), topList = [], wScored = 0;
+function rankWallets() {
+  topList = Object.entries(W).filter(([, w]) => w.n >= 4).map(([u, w]) => ({ u, ...w, lb: wilson(w.h2, w.n), dd: (w.days || []).length })).sort((a, b) => b.lb - a.lb || b.dd - a.dd || b.n - a.n).slice(0, 50);
+  TOP = new Set(topList.filter(x => x.lb >= 0.3).map(x => x.u));
+}
+rankWallets(); setInterval(rankWallets, 60000);
+function scoreWallets(t) {
+  if (!t.early?.length || !t.m20) return;
+  const peak = Math.max(t.max || 0, t.peakT || 0), now = Date.now(), dk = dayKey(now);
+  for (const { u, m } of t.early) {
+    if (!m || u === t.creator) continue;
+    const mult = peak / m, w = W[u] || (W[u] = { n: 0, h2: 0, h5: 0, sl: 0, days: [], last: 0 });
+    w.n++; w.last = now; w.sl += Math.log(Math.max(0.05, Math.min(mult, 50)));
+    if (mult >= 2) { w.h2++; if (!w.days.includes(dk)) { w.days.push(dk); if (w.days.length > 14) w.days.shift(); } }
+    if (mult >= 5) w.h5++;
+  }
+  wScored++;
+}
 
 // ===================== Campeón =====================
 function scoreOf(id) {
@@ -1005,10 +1061,19 @@ function render() {
   if (!X_URL) { xc.textContent = 'X · sin conectar (requiere Netlify)'; xc.className = ''; }
   else { xc.textContent = xState.ok === false ? 'X · error: ' + xState.err : xState.ok ? `X · activo · ${xState.used}/${xState.cap} posts hoy` : 'X · conectando…'; xc.className = xState.ok ? 'on' : ''; }
   const tt = topTrends(10); $('xTrends').textContent = tt.length ? 'Tendencias en X ahora: ' + tt.map(([w]) => w).join(' · ') : '';
+  renderWallets();
   renderBot();
   $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY';
   const tp = tapeItems.join(' &nbsp;·&nbsp; ');
   if (tp && tp !== lastTape) { lastTape = tp; $('tape').innerHTML = tp + ` &nbsp;·&nbsp; <b class="c">RPC</b> ${rpcCalls} lecturas`; }
+}
+
+function renderWallets() {
+  const all = Object.keys(W).length, live = [...tokens.values()].filter(t => t.f?.smart).length;
+  $('wK1').textContent = all.toLocaleString('es-ES'); $('wK2').textContent = wScored; $('wK3').textContent = TOP.size; $('wK4').textContent = live;
+  if (!topList.length) return;
+  const ago = ts => { const m = Math.round((Date.now() - ts) / 60000); return m < 60 ? m + ' min' : m < 1440 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' d'; };
+  $('wRank').innerHTML = topList.slice(0, 30).map((w, i) => `<tr${TOP.has(w.u) ? ' class="ch"' : ''}><td>${i + 1}</td><td title="${w.u}"><span style="user-select:all;font-family:'JetBrains Mono',ui-monospace,monospace">${w.u.slice(0, 4)}…${w.u.slice(-4)}</span> <span style="color:var(--dim)">· hace ${ago(w.last)}</span></td><td>${w.n}</td><td>${Math.round(100 * w.h2 / w.n)}%</td><td>${Math.round(100 * w.h5 / w.n)}%</td><td>${Math.exp(w.sl / w.n).toFixed(2)}x</td><td>${w.dd}</td><td style="color:${w.lb >= 0.3 ? 'var(--g)' : 'var(--soft)'}">${Math.round(100 * w.lb)}%</td></tr>`).join('');
 }
 
 // ===================== Botones =====================
