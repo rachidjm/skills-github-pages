@@ -402,7 +402,7 @@ function pump() {
     const job = queue.shift(); inFlight++;
     fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: job.method, params: job.params }) })
       .then(r => r.status === 429 ? Promise.reject(new Error('429')) : r.json())
-      .then(j => { rpcCalls++; if (j.error) throw new Error(j.error.message); job.resolve(j.result); })
+      .then(j => { rpcCalls++; rpcOkAt = Date.now(); if (j.error) throw new Error(j.error.message); job.resolve(j.result); })
       .catch(async e => { rpcErrors++; if (++job.tries < 3) { await sleep(1500 * job.tries); queue.push(job); } else job.reject(e); })
       .finally(() => { inFlight--; pump(); });
   }
@@ -582,7 +582,7 @@ function tape(cls, label, txt) { tapeItems.unshift(`<b class="${cls}">${label}</
 
 // ===================== Fuente 1: tokens nuevos (PumpPortal, gratis) =====================
 const tokens = new Map(), creators = new Map(), names = new Map();
-let running = false, ws = null, seen = 0, wsOk = false, startedAt = 0;
+let running = false, ws = null, seen = 0, wsOk = false, startedAt = 0, wsFails = 0, lastWsMsg = 0, rpcOkAt = 0;
 // ===================== Sesión: lo que está pasando ahora sobrevive a recargar la página =====================
 const SESS = 'snlab_session_v1';
 const tokOut = t => { const { pos, decided, tk, csigs, ...r } = t; return { ...r, pos: [...pos], decided: [...decided] }; };
@@ -611,9 +611,9 @@ setInterval(sessSave, 5000); addEventListener('pagehide', () => { sessSave(); sa
 
 function connect() {
   ws = new WebSocket(PP);
-  ws.onopen = () => { wsOk = true; ws.send(JSON.stringify({ method: 'subscribeNewToken' })); ws.send(JSON.stringify({ method: 'subscribeMigration' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
-  ws.onmessage = m => { let e; try { e = JSON.parse(m.data); } catch { return; } if (e.txType === 'create') onCreate(e); else if (e.txType === 'migrate' || e.txType === 'migration' || (e.mint && /migrat/i.test(String(e.txType || e.type || '')))) onMigrate(e); };
-  ws.onclose = () => { ws = null; if (running) setTimeout(() => running && connect(), 3000); };
+  ws.onopen = () => { wsOk = true; wsFails = 0; lastWsMsg = Date.now(); ws.send(JSON.stringify({ method: 'subscribeNewToken' })); ws.send(JSON.stringify({ method: 'subscribeMigration' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
+  ws.onmessage = m => { lastWsMsg = Date.now(); let e; try { e = JSON.parse(m.data); } catch { return; } if (e.txType === 'create') onCreate(e); else if (e.txType === 'migrate' || e.txType === 'migration' || (e.mint && /migrat/i.test(String(e.txType || e.type || '')))) onMigrate(e); };
+  ws.onclose = () => { ws = null; wsOk = false; wsFails++; if (running) setTimeout(() => running && connect(), Math.min(30000, 3000 * wsFails)); };
   ws.onerror = () => {};
 }
 // Compra en papel 1–2 s después del lanzamiento, al precio real de la curva en ese momento
@@ -1489,7 +1489,9 @@ function render() {
   finally { try { $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY'; } catch {} }
 }
 function renderMain() {
-  const noConn = running && startedAt && Date.now() - startedAt > 15000 && (!wsOk || (!rpcCalls && Date.now() - startedAt > 60000));
+  const runFor = running && startedAt ? Date.now() - startedAt : 0, wsDown = runFor > 20000 && Date.now() - (lastWsMsg || startedAt) > 90000, rpcDown = runFor > 60000 && Date.now() - (rpcOkAt || startedAt) > 90000;
+  const noConn = wsDown || rpcDown;
+  if (noConn) $('warn').innerHTML = `<b>Sin conexión con ${wsDown && rpcDown ? 'PumpPortal ni con el nodo de Solana' : wsDown ? 'PumpPortal (lanzamientos nuevos)' : 'el nodo de Solana (precios y operaciones)'}</b> desde hace ${Math.round((Date.now() - ((wsDown ? lastWsMsg : rpcOkAt) || startedAt)) / 1000)} s. Si tienes el bot abierto en otra pestaña, navegador o en la app de Claude, ciérralo: dos bots desde la misma conexión hacen que corten uno. El bot reintenta solo.`;
   $('live').className = 'live' + (running && !noConn ? ' on' : ''); $('liveTxt').textContent = noConn ? 'SIN CONEXIÓN' : running ? 'EN VIVO' : 'PAUSA';
   $('warn').style.display = noConn ? 'block' : 'none';
   $('play').disabled = running; $('stop').disabled = !running;
