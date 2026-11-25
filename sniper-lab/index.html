@@ -255,6 +255,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
       </div>
       <div class="fig" style="min-height:170px;margin-top:8px"><svg id="chart"></svg></div>
       <div class="sub" id="chWhy"></div>
+      <div id="ideas" style="margin-top:10px"></div>
     </section>
     <section class="pn">
       <h2>ACTIVIDAD POR HORA <em>hora de Madrid</em></h2>
@@ -409,12 +410,28 @@ for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const 
   STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.id, ent: e, tp, sl, filter: fl, name: `${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
 }
 const STRAT = new Map(STRATS.map(s => [s.id, s]));
+const FMAP = new Map(FILTERS.map(f => [f.id, f]));
+// Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
+function specOf(s) { return s.spec || { entry: s.entry, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: CFG.holdMin, up: s.ent.up ?? null }; }
+function genId(g) { return `g_${g.entry}_tp${g.tp}_sl${g.sl}_h${g.hold}_u${g.up ?? 0}_${[...g.filters].sort().join('+')}`; }
+function addGen(g) {
+  if (STRAT.has(g.id)) return STRAT.get(g.id);
+  const E = ENTRIES.find(e => e.id === g.entry); if (!E) return null;
+  const fs = g.filters.map(id => FMAP.get(id)).filter(Boolean); if (!fs.length) return null;
+  const ent = { ...E, up: g.up ?? E.up };
+  const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
+  const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, filter, spec: g, gen: true,
+    name: `✦ ${E.txt}${E.min && ent.up !== E.up ? ` (subida ≥${Math.round((ent.up - 1) * 100)}%)` : ''} · ${filter.txt} · objetivo ${String(g.tp).replace('.', ',')}x · stop -${g.sl}%${g.hold !== CFG.holdMin ? ` · salida ${g.hold} min` : ''}` };
+  STRATS.push(st); STRAT.set(st.id, st); return st;
+}
 
 // ===================== Estado persistente =====================
 let data = { since: Date.now(), stats: {}, hours: [], champ: null, hist: [], champTrades: [], last: [], reasons: { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }, totals: { seen: 0, veto: 0, entry: 0 } };
 try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.stats) data = { ...data, ...s }; } catch {}
 data.reasons ??= { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }; data.discarded ??= {}; data.totals ??= { seen: 0, veto: 0, entry: 0 }; data.last ??= [];
 data.hours = Array.from({ length: 24 }, (_, i) => ({ tokens: 0, x2: 0, rug: 0, vol: 0, done: 0, veto: 0, evald: 0, ...(data.hours?.[i] || {}) }));
+data.gen ??= []; data.ideas ??= [];
+for (const g of data.gen) addGen(g);
 for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
 setInterval(save, 15000);
@@ -461,6 +478,31 @@ function tape(cls, label, txt) { tapeItems.unshift(`<b class="${cls}">${label}</
 // ===================== Fuente 1: tokens nuevos (PumpPortal, gratis) =====================
 const tokens = new Map(), creators = new Map(), names = new Map();
 let running = false, ws = null, seen = 0, wsOk = false, startedAt = 0;
+// ===================== Sesión: lo que está pasando ahora sobrevive a recargar la página =====================
+const SESS = 'snlab_session_v1';
+const tokOut = t => { const { pos, decided, tk, csigs, ...r } = t; return { ...r, pos: [...pos], decided: [...decided] }; };
+function sessSave() {
+  try {
+    for (const p of Object.values(typeof pf !== 'undefined' && pf ? pf.positions : {})) { const t = tokens.get(p.mint); if (t) p.lastRaw = t.mcap / p.entry; }
+    const tk = [...tokens.values()].filter(t => t.phase === 'tracking').map(tokOut);
+    localStorage.setItem(SESS, JSON.stringify({ ts: Date.now(), running, seen, tk, logLines: logLines.slice(0, 80), tapeItems, stack: stack.slice(0, 30).map(({ tk, ...d }) => ({ ...d, mint: tk?.mint })),
+      constel: constel.slice(0, 160).map(t => ({ mint: t.mint, symbol: t.symbol, state: t.state, ang: t.ang, f: t.f ? { score: t.f.score, uniqueBuyers: t.f.uniqueBuyers, vetoes: t.f.vetoes } : null, createdAt: t.createdAt })),
+      series: Object.fromEntries(Object.entries(series).map(([k, m]) => [k, [...m]])) }));
+  } catch {}
+}
+let sess = null; try { sess = JSON.parse(localStorage.getItem(SESS)); } catch {}
+if (sess && Date.now() - sess.ts < 6 * 3600e3) {
+  const now = Date.now();
+  for (const r of sess.tk || []) { if (now - r.createdAt > CFG.trackMaxMin * 60e3 + 10 * 60e3 && !(r.pos || []).length) continue;
+    const t = { ...r, pos: new Map(r.pos || []), decided: new Set(r.decided || []), born: performance.now() - 5000, lastChange: Math.max(r.lastChange || now, now - 60e3) };
+    tokens.set(t.mint, t); }
+  logLines.push(...(sess.logLines || [])); tapeItems.push(...(sess.tapeItems || [])); seen = sess.seen || 0;
+  for (const c of sess.constel || []) constel.push(tokens.get(c.mint) || { ...c, phase: 'done', pos: new Map(), decided: new Set(), born: performance.now() - 5000 });
+  for (const d of sess.stack || []) stack.push({ ...d, tk: tokens.get(d.mint) || constel.find(c => c.mint === d.mint) });
+  for (const [k, arr] of Object.entries(sess.series || {})) if (series[k]) for (const [m, v] of arr) series[k].set(m, v);
+}
+setInterval(sessSave, 5000); addEventListener('pagehide', () => { sessSave(); save(); }); addEventListener('beforeunload', () => { sessSave(); save(); });
+
 function connect() {
   ws = new WebSocket(PP);
   ws.onopen = () => { wsOk = true; ws.send(JSON.stringify({ method: 'subscribeNewToken' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
@@ -628,7 +670,7 @@ function settle(t, now, forceAll = false) {
     else if (m >= s.tp) { p.exiting = 'objetivo'; p.trig = s.tp * p.entry; continue; }
     else if (m <= 1 - s.sl / 100) { p.exiting = 'stop'; continue; }
     else if (forceAll) reason = 'sin actividad';
-    else if (now - p.at > CFG.holdMin * 60e3) reason = 'tiempo';
+    else if (now - p.at > (s.hold || CFG.holdMin) * 60e3) reason = 'tiempo';
     if (!reason) continue;
     const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig) : t.mcap) / p.entry;
     pfOnClose(t, id, raw, reason, now);
@@ -637,7 +679,7 @@ function settle(t, now, forceAll = false) {
   }
 }
 function record(id, net, t, reason, now) {
-  const st = data.stats[id]; st.n++; st.sum += net; if (net > 0) st.wins++;
+  const st = data.stats[id]; st.n++; st.sum += net; if (net > 0) st.wins++; st.rs ??= {}; st.rs[reason] = (st.rs[reason] || 0) + 1;
   st.recent.push(+net.toFixed(2)); if (st.recent.length > CFG.recentN) st.recent.shift();
   data.reasons[reason] = (data.reasons[reason] || 0) + 1;
   data.last.unshift({ ts: now, symbol: t.symbol, id, net: +net.toFixed(1), reason }); data.last.length = Math.min(data.last.length, 60);
@@ -731,6 +773,47 @@ function pickChampion() {
 }
 setInterval(pickChampion, 10000);
 
+// ===================== Innovación: el bot inventa estrategias nuevas =====================
+// Mira por qué fallan las mejores (stops, se quedan cortas, objetivo fácil…) y crea una variante que ataca ese problema.
+// Las variantes compiten igual que las demás: si pierden, el descarte automático las aparta.
+function innovate() {
+  const active = STRATS.filter(s => !data.discarded[s.id]);
+  if (active.filter(s => s.gen).length >= 80) return;
+  const best = active.map(s => scoreOf(s.id)).filter(x => x && x.n >= 15).sort((a, b) => b.lb - a.lb).slice(0, 4);
+  let made = 0;
+  for (const b of best) {
+    if (made >= 3) break;
+    const s = STRAT.get(b.id), st = data.stats[b.id], rs = st.rs || {}, tot = Object.values(rs).reduce((a, c) => a + c, 0);
+    if (tot < 10) continue;
+    const fs = (rs.stop || 0) / tot, fo = (rs.objetivo || 0) / tot, ft = ((rs.tiempo || 0) + (rs['sin actividad'] || 0)) / tot;
+    const base = specOf(s), ideas = [];
+    const extra = ['clean', 'smart', 'accel', 'devok', 'score60'].find(f => !base.filters.includes(f) && !base.filters.includes('all') || (base.filters.includes('all') && f === 'clean'));
+    if (fs >= 0.5) {
+      if (base.sl < 60) ideas.push([{ ...base, sl: Math.min(60, base.sl + 15) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → stop más holgado`]);
+      if (extra) ideas.push([{ ...base, filters: base.filters.filter(f => f !== 'all').concat(extra) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → filtro extra: ${FMAP.get(extra).txt}`]);
+      if (base.entry === 'info') ideas.push([{ ...base, entry: 'confirm' }, `entra y se hunde enseguida (${Math.round(fs * 100)}% stops) → esperar 1 min de confirmación`]);
+      if (ENTRIES.find(e => e.id === base.entry)?.min) ideas.push([{ ...base, up: +((base.up || 1.3) + 0.3).toFixed(1) }, `las supervivientes que elige se caen → exigir más subida previa`]);
+    }
+    if (ft >= 0.4) {
+      if (base.tp > 1.3) ideas.push([{ ...base, tp: Math.max(1.3, +(base.tp * 0.7).toFixed(1)) }, `muchas se quedan sin llegar al objetivo (${Math.round(ft * 100)}%) → objetivo más cerca`]);
+      if (base.hold < 40) ideas.push([{ ...base, hold: Math.min(40, base.hold + 10) }, `muchas se cierran por tiempo (${Math.round(ft * 100)}%) → darles más tiempo`]);
+    }
+    if (fo >= 0.35 && base.tp < 6) ideas.push([{ ...base, tp: Math.min(6, +(base.tp * 1.5).toFixed(1)) }, `llega al objetivo a menudo (${Math.round(fo * 100)}%) → objetivo más ambicioso`]);
+    for (const [g, why] of ideas) {
+      if (made >= 3) break;
+      g.id = genId(g); if (STRAT.has(g.id) || data.discarded[g.id]) continue;
+      g.parent = b.id; g.why = why; g.ts = Date.now();
+      const ns = addGen(g); if (!ns) continue;
+      data.gen.push(g); data.stats[g.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
+      data.ideas.unshift({ ts: g.ts, id: g.id, parent: s.name, why }); data.ideas.length = Math.min(data.ideas.length, 30);
+      log('p', `IDEA ${esc(why)} · nueva: ${esc(ns.name)}`); tape('a', 'IDEA', why);
+      made++;
+    }
+  }
+  if (made) { save(); fillStratSelect(); }
+}
+setInterval(innovate, 10 * 60e3); setTimeout(innovate, 90e3);
+
 function setRunning(v) {
   running = v; if (v && !startedAt) startedAt = Date.now();
   if (v) { if (!ws) connect(); log('g', 'PLAY · bot en marcha'); }
@@ -752,8 +835,8 @@ setInterval(pfSave, 10000);
 // € que recibes al vender: comisiones %, slippage y fee de red fijo por transacción
 function pfValue(inv, raw) { const cost = (CFG.feePct + CFG.slipPct) / 100, fix = CFG.netFeeSol * solEur; const bought = Math.max(0, inv - fix) / (1 + cost); return Math.max(0, bought * raw * (1 - cost) - fix); }
 // Las posiciones abiertas antes de recargar la página ya no se siguen: se cierran a precio de entrada (menos costes)
-for (const p of Object.values(pf.positions)) { const got = pfValue(p.inv, 1); pf.cash += got; pf.closed.unshift({ ts: Date.now(), symbol: p.symbol, mint: p.mint, id: p.id, inv: p.inv, got, reason: 'página recargada', held: 0, eqAfter: pf.cash }); }
-pf.positions = {};
+// Al recargar, las posiciones siguen abiertas si su token se ha recuperado; si no, se cierran al último precio conocido
+for (const [k, p] of Object.entries(pf.positions)) { if (tokens.get(p.mint)?.pos?.has(p.id)) continue; const got = pfValue(p.inv, p.lastRaw || 1); pf.cash += got; pf.closed.unshift({ ts: Date.now(), symbol: p.symbol, mint: p.mint, id: p.id, inv: p.inv, got, reason: 'cerrada al recargar', held: (Date.now() - p.at) / 1000, eqAfter: pf.cash }); delete pf.positions[k]; }
 function pfTarget() {
   if (pf.strategy !== 'auto' && STRAT.has(pf.strategy)) return pf.strategy;
   if (data.champ) return data.champ.id;
@@ -804,7 +887,8 @@ function tween(el, to, fmt) { const from = el._v ?? to; el._v = to; if (from ===
 function toast(msg) { const el = $('toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 4500); }
 // Ajustes
 const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat');
-inStrat.innerHTML = '<option value="auto">Automática: la campeona del torneo</option>' + [...STRATS].sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+function fillStratSelect() { const v = inStrat.value; inStrat.innerHTML = '<option value="auto">Automática: la mejor del torneo</option>' + [...STRATS].filter(s => !data.discarded[s.id] || s.id === pf.strategy).sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join(''); if (v) inStrat.value = v; }
+fillStratSelect();
 const syncInputs = (all = false) => { if (all) inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
 syncInputs(true);
 inMode.onchange = () => { pf.mode = inMode.value; pf.size = pf.mode === 'pct' ? 10 : Math.max(1, Math.round((Number(inStart.value) || pf.start) / 10)); syncInputs(); pfSave(); };
@@ -1079,6 +1163,7 @@ function render() {
   else { xc.textContent = xState.ok === false ? 'X · error: ' + xState.err : xState.ok ? `X · activo · ${xState.used}/${xState.cap} posts hoy` : 'X · conectando…'; xc.className = xState.ok ? 'on' : ''; }
   const tt = topTrends(10); $('xTrends').textContent = tt.length ? 'Tendencias en X ahora: ' + tt.map(([w]) => w).join(' · ') : '';
   renderWallets();
+  $('ideas').innerHTML = data.ideas.length ? '<div class="sub" style="color:var(--ink);font-weight:700;margin-bottom:4px">IDEAS DEL BOT · estrategias inventadas</div>' + data.ideas.slice(0, 4).map(i => { const x = scoreOf(i.id); return `<div class="sub" style="margin-top:3px">✦ ${esc(i.why)} <span style="color:var(--dim)">· ${data.discarded[i.id] ? 'descartada' : x ? `${x.n} ops, ${eur(x.mean / 100)}/op` : 'sin operaciones aún'}</span></div>`; }).join('') : '<div class="sub" style="color:var(--dim)">El bot inventará variantes de las mejores estrategias en cuanto tengan 15+ operaciones.</div>';
   renderBot();
   $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY';
   const tp = tapeItems.join(' &nbsp;·&nbsp; ');
@@ -1106,6 +1191,7 @@ $('copy').onclick = async () => {
 window.__arena = { data, STRATS, scoreOf, tokens: () => tokens.size, constel, cam };
 window.__snlab = { tokens, log, cfg: CFG, solEur: () => solEur };
 setInterval(render, 1000); render();
+if (sess?.running) { setRunning(true); log('c', 'sesión recuperada tras recargar · el bot sigue donde estaba'); }
 }
 </script>
 <script src="tg.js" defer></script>
