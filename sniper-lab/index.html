@@ -238,6 +238,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
       <h2>TASA DE ACIERTO <em id="hrScope">todas las estrategias</em></h2>
       <div class="big mono" id="hr">–</div>
       <div class="sub" id="hrSub">Esperando las primeras operaciones cerradas</div>
+      <div class="sub" id="hrBest" style="margin-top:4px;color:var(--ink)"></div>
       <div class="split">
         <div><span>Aciertos</span><strong id="wins" style="color:var(--g)">0</strong></div>
         <div><span>Fallos</span><strong id="losses" style="color:var(--r)">0</strong></div>
@@ -338,7 +339,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 // ===================== Configuración =====================
 const CFG = { sizeEur: 1, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
   feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
-  minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 15 };   // decide cuando hay datos suficientes (máx. 2 min)
+  minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 20 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
 let solEur = 130;
 fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eur').then(r => r.json()).then(j => { if (j?.solana?.eur) solEur = j.solana.eur; }).catch(() => {});
@@ -375,7 +376,8 @@ function pump() {
 }
 
 // ===================== Estrategias =====================
-const ENTRIES = [{ id: 'info', txt: 'Al tener datos suficientes' }, { id: 'confirm', txt: 'Datos + 1 min de confirmación' }];
+const ENTRIES = [{ id: 'info', txt: 'Al tener datos suficientes' }, { id: 'confirm', txt: 'Datos + 1 min de confirmación' },
+  { id: 'late8', txt: 'Superviviente a los 8 min', min: 8, up: 1.3 }, { id: 'late15', txt: 'Superviviente a los 15 min', min: 15, up: 1.5 }];
 const TPS = [1.5, 2, 3], SLS = [25, 40];
 const FILTERS = [
   { id: 'all', txt: 'todos', f: () => true },
@@ -404,14 +406,14 @@ const FILTERS = [
 ];
 const STRATS = [];
 for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
-  STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.id, tp, sl, filter: fl, name: `${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
+  STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.id, ent: e, tp, sl, filter: fl, name: `${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
 }
 const STRAT = new Map(STRATS.map(s => [s.id, s]));
 
 // ===================== Estado persistente =====================
 let data = { since: Date.now(), stats: {}, hours: [], champ: null, hist: [], champTrades: [], last: [], reasons: { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }, totals: { seen: 0, veto: 0, entry: 0 } };
 try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.stats) data = { ...data, ...s }; } catch {}
-data.reasons ??= { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }; data.totals ??= { seen: 0, veto: 0, entry: 0 }; data.last ??= [];
+data.reasons ??= { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }; data.discarded ??= {}; data.totals ??= { seen: 0, veto: 0, entry: 0 }; data.last ??= [];
 data.hours = Array.from({ length: 24 }, (_, i) => ({ tokens: 0, x2: 0, rug: 0, vol: 0, done: 0, veto: 0, evald: 0, ...(data.hours?.[i] || {}) }));
 for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
@@ -598,6 +600,15 @@ function tryEntries(t, now) {
   const open = s => { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); };
   for (const s of STRATS) {
     if (t.decided.has(s.id)) continue;
+    if (data.discarded[s.id]) { t.decided.add(s.id); continue; }   // descartada: ya no se prueba
+    if (s.ent.min) {                     // entrada tardía: solo monedas que siguen vivas, subiendo y cerca de máximos
+      const age = now - t.createdAt;
+      if (age < s.ent.min * 60e3) continue;
+      t.decided.add(s.id);
+      if (age > (s.ent.min + 2) * 60e3 || !alive || (t.f.uniqueBuyers || 0) < 3) continue;
+      if (t.mcap >= t.m20 * s.ent.up && t.mcap >= t.max * 0.7 && s.filter.f(t.f, t)) open(s);
+      continue;
+    }
     if (s.entry === 'info') {            // entra en el momento en que hay datos suficientes
       t.decided.add(s.id);
       if (t.f.enough && s.filter.f(t.f, t)) open(s);
@@ -703,7 +714,11 @@ function scoreOf(id) {
   return { id, n, mean, lb: mean - sd / Math.sqrt(n), wr: 100 * r.filter(x => x > 0).length / n };
 }
 function pickChampion() {
-  const c = STRATS.map(s => scoreOf(s.id)).filter(x => x && x.n >= CFG.minN).sort((a, b) => b.lb - a.lb);
+  // Descarta las estrategias que ya han demostrado perder: 30+ ops y ni siquiera el escenario optimista sale positivo
+  for (const s of STRATS) { if (data.discarded[s.id]) continue; const r = data.stats[s.id].recent, n = r.length; if (n < CFG.minN) continue;
+    const m = r.reduce((a, b) => a + b, 0) / n, sd = Math.sqrt(r.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)), ub = m + 1.28 * sd / Math.sqrt(n);
+    if (ub < 0) { data.discarded[s.id] = Date.now(); log('a', `DESCARTADA ${esc(s.name)} · ${n} ops, media ${pc(m)}: deja de probarse`); } }
+  const c = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= CFG.minN).sort((a, b) => b.lb - a.lb);
   if (!c.length) return;
   const best = c[0], cur = data.champ ? scoreOf(data.champ.id) : null;
   if (!cur || best.id !== data.champ.id && best.lb > cur.lb + 2) {
@@ -742,7 +757,7 @@ pf.positions = {};
 function pfTarget() {
   if (pf.strategy !== 'auto' && STRAT.has(pf.strategy)) return pf.strategy;
   if (data.champ) return data.champ.id;
-  const c = STRATS.map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
+  const c = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
   return c ? c.id : FALLBACK;
 }
 function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = tokens.get(p.mint); inv += p.inv; val += pfValue(p.inv, t ? t.mcap / p.entry : 1); } return { inv, val }; }
@@ -1009,6 +1024,8 @@ function render() {
   if (closed) {
     const wr = 100 * wins / closed; $('hr').textContent = Math.round(wr) + '%'; $('hr').style.color = wr >= 50 ? 'var(--g)' : wr >= 25 ? 'var(--a)' : 'var(--r)';
     $('hrSub').textContent = `${closed} operaciones cerradas entre ${STRATS.length} estrategias desde ${madrid(data.since, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+    const lead = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
+    $('hrBest').innerHTML = lead ? `Mejor estrategia ahora: <b style="color:${lead.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(lead.mean / 100)}/op</b> con ${Math.round(lead.wr)}% de acierto (${lead.n} ops) · lo que importa es el €/op, no el %` : '';
     $('wins').textContent = wins; $('losses').textContent = closed - wins; $('avg').textContent = eur(sum / closed / 100); $('avg').style.color = sum >= 0 ? 'var(--g)' : 'var(--r)';
   }
   const R = data.reasons, tot = (R.objetivo || 0) + (R.stop || 0) + (R.tiempo || 0) + (R['sin actividad'] || 0);
@@ -1052,8 +1069,8 @@ function render() {
   // Pila de decisiones
   if (stack.length) $('stack').innerHTML = stack.map((d, i) => `<div class="dc ${d.state}" data-i="${i}"><span class="lab">${d.state === 'entry' ? (d.vetoed ? 'ENTRADA · CON VETO' : 'ENTRADA') : d.state === 'veto' ? 'VETO' : 'SIN ENTRADA'}</span><span class="nm">$${esc(d.symbol)}${d.n ? ` · ${d.n} estrategias` : ''}</span><span class="sc">${d.score}</span><span class="why">${esc(d.why)}</span></div>`).join('');
   // Aspirantes
-  const sc = STRATS.map(s => scoreOf(s.id)).filter(Boolean).sort((a, b) => (b.n >= 10) - (a.n >= 10) || b.lb - a.lb).slice(0, 15);
-  $('nStrat').textContent = `${STRATS.length} estrategias · top 15`;
+  const sc = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(Boolean).sort((a, b) => (b.n >= 10) - (a.n >= 10) || b.lb - a.lb).slice(0, 15);
+  const nDisc = Object.keys(data.discarded).length; $('nStrat').textContent = `${STRATS.length - nDisc} activas · ${nDisc} descartadas · top 15`;
   if (sc.length) $('table').innerHTML = sc.map(x => `<tr class="${data.champ?.id === x.id ? 'ch' : ''}"><td>${esc(STRAT.get(x.id).name)}</td><td>${data.stats[x.id].n}</td><td>${Math.round(x.wr)}%</td><td style="color:${x.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.mean / 100)}</td><td style="color:${x.lb >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.lb / 100)}</td><td>${eur(data.stats[x.id].sum / 100)}</td></tr>`).join('');
   // Cinta de operaciones
   if (data.last.length) $('trades').innerHTML = data.last.map(o => `<div class="tt"><span class="s" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${o.net > 0 ? 'ACIERTO' : 'FALLO'}</span><span><b>$${esc(o.symbol)}</b> · ${o.reason}</span><span class="n" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${pc(o.net)}</span><span class="w">${esc(STRAT.get(o.id)?.name || o.id)} · ${madrid(o.ts, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('');
