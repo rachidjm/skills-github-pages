@@ -11,6 +11,7 @@
   // La caché interna de GramJS llega a ocupar >1 MB y llena el almacenamiento de la web (lo aprendido deja de guardarse). Es regenerable: se vacía.
   const dropCache = () => { try { for (const k of Object.keys(localStorage)) if (/^GramJs:apiCache/i.test(k)) localStorage.removeItem(k); } catch {} };
   dropCache(); setInterval(dropCache, 10 * 60e3);
+  try { const orig = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { if (this === window.localStorage && /^GramJs:apiCache/i.test(String(k))) return; return orig.call(this, k, v); }; } catch {}
   // Cómo se puntúa una llamada: entras al minuto siguiente de verla, objetivo 2x, stop -40%, salida a los 60 min
   const SIM = { delayMin: 1, tp: 2, sl: 40, holdMin: 60, minN: 5 };
   const SKIP = new Set(['So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY9NL8UdbTXkvVb1', '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P', 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA', 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', '11111111111111111111111111111111']);

@@ -380,7 +380,8 @@ fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=eu
 const $ = id => document.getElementById(id);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const eur = v => (v < 0 ? '-' : v > 0 ? '+' : '') + '€' + Math.abs(v).toFixed(2).replace('.', ',');
-const pc = (v, d = 1) => (v > 0 ? '+' : '') + v.toFixed(d).replace('.', ',') + '%';
+const pc = (v, d = 1) => Number.isFinite(v) ? (v > 0 ? '+' : '') + v.toFixed(d).replace('.', ',') + '%' : '–';
+const okPx = v => Number.isFinite(v) && v > 0;   // precio válido para abrir o cerrar una posición
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const b58 = b => { const d = [0]; for (const x of b) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let s = ''; for (const x of b) { if (x) break; s += '1'; } return s + d.reverse().map(i => B58[i]).join(''); };
@@ -533,6 +534,9 @@ data.gen ??= []; data.ideas ??= []; data.pf ??= [];
 for (const d of data.pf) regPatternFilter(d);
 for (const g of data.gen) addGen(g);
 for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
+// Reparación: resultados inválidos (NaN guardado como null) de una versión anterior
+for (const st of Object.values(data.stats)) { const bad = st.recent.some(x => !Number.isFinite(x)); if (bad) st.recent = st.recent.filter(Number.isFinite); if (!Number.isFinite(st.sum)) st.sum = st.recent.length ? st.recent.reduce((a, b) => a + b, 0) / st.recent.length * st.n : 0; }
+data.last = data.last.filter(o => Number.isFinite(o.net)); if (data.trs) data.trs = data.trs.filter(o => Number.isFinite(o.net));
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
 setInterval(save, 15000);
 
@@ -756,7 +760,7 @@ async function evaluate(mint) {
 function tryEntries(t, now) {
   if (!running || !t.f) return;
   const alive = now - t.lastChange < 120e3;
-  const open = s => { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); };
+  const open = s => { if (!okPx(t.mcap)) return; t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); };
   for (const s of STRATS) {
     if (s.swing || s.ent.instant || s.ent.call) continue;
     if (t.decided.has(s.id)) continue;
@@ -783,7 +787,8 @@ function tryEntries(t, now) {
 function settle(t, now, forceAll = false) {
   for (const [id, p] of t.pos) {
     const s = STRAT.get(id), m = t.mcap / p.entry;
-    if (!s) { t.pos.delete(id); continue; }
+    if (!s || !okPx(p.entry)) { t.pos.delete(id); continue; }   // posición inválida: se descarta sin contarla
+    if (!okPx(t.mcap)) continue;
     p.hi = Math.max(p.hi || 1, m); p.lo = Math.min(p.lo || 1, m);    // lo mejor y lo peor que llegó a ir (para el analista)
     let reason = null;
     if (p.exiting) reason = p.exiting;
@@ -793,13 +798,15 @@ function settle(t, now, forceAll = false) {
     else if (forceAll) reason = 'sin actividad';
     else if (now - p.at > (s.hold || CFG.holdMin) * 60e3) reason = 'tiempo';
     if (!reason) continue;
-    const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig) : t.mcap) / p.entry;
+    const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig || t.mcap) : t.mcap) / p.entry;
+    if (!Number.isFinite(raw)) { t.pos.delete(id); continue; }
     pfOnClose(t, id, raw, reason, now);
     record(id, s.swing ? netSwing(raw) : netReturn(raw), t, reason, now, p);
     t.pos.delete(id);
   }
 }
 function record(id, net, t, reason, now, p) {
+  if (!Number.isFinite(net)) return;
   data.trs ??= [];
   const f = t.f, ff = t.swing ? { liq: Math.round(t.liq || 0), ch1: t.ch1, ch6: t.ch6 } : f ? { sc: f.score, b: f.uniqueBuyers, v: (f.vetoes || []).length, sm: f.smart || 0, tg: f.tgCalls || 0, my: f.mayhem ? 1 : 0, ac: f.accel ? 1 : 0, dec: f.decSec } : {};
   data.trs.push({ id, sym: t.symbol, reason, net: +net.toFixed(1), mfe: +(p?.hi || 1).toFixed(3), mae: +(p?.lo || 1).toFixed(3), hold: p ? +((now - p.at) / 60000).toFixed(1) : 0, ts: now, f: ff });
@@ -1090,12 +1097,12 @@ async function onCall(mint, info) {
   } else { const tt = swAdd(p, { calledAt: Date.now() }); swEnter(tt, ['call'], Date.now()); }
 }
 function callEnter(t) {
-  const now = Date.now(); let n = 0;
+  const now = Date.now(); let n = 0; if (!okPx(t.mcap)) return;
   for (const s of STRATS) { if (!s.ent?.call || data.discarded[s.id] || t.pos.has(s.id) || !s.filter.f(t.f || {}, t)) continue; t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); n++; }
   if (n) { log('g', `LLAMADA $${esc(t.symbol)} · ${esc(t.callInfo?.src || 'comunidad')}${t.callInfo?.chat ? ' · ' + esc(t.callInfo.chat) : ''} · ${n} estrategias entran al momento`); tape('g', 'LLAMADA', `$${t.symbol}`); }
 }
 function swEnter(t, sigs, now) {
-  if (!sigs.length) return;
+  if (!sigs.length || !okPx(t.mcap)) return;
   t.sigs = sigs.map(x => ({ x, ts: now })).concat(t.sigs || []).slice(0, 5);
   log('c', `VOLUMEN $${esc(t.symbol)} · ${sigs.map(x => SW_SIGS.find(g => g.id === x).txt).join(' · ')}`); tape('c', 'SEÑAL', `$${t.symbol}`);
   for (const s of STRATS) { if (!s.swing || !sigs.includes(s.sig) || data.discarded[s.id] || t.pos.has(s.id) || !s.filter.f(t, t)) continue; t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); }
@@ -1207,6 +1214,8 @@ const newPf = (start, mode, size, strategy) => ({ start, cash: start, mode, size
 let pf = null;
 try { pf = JSON.parse(localStorage.getItem(PF_KEY)); } catch {}
 if (!pf || !pf.positions) pf = newPf(100, 'fixed', 10, 'auto');
+if (!Number.isFinite(pf.cash)) { pf.cash = (pf.closed || []).filter(c => Number.isFinite(c.got) && Number.isFinite(c.inv)).reduce((a, c) => a + c.got - c.inv, pf.start || 100); }
+pf.closed = (pf.closed || []).filter(c => Number.isFinite(c.got)); pf.curve = (pf.curve || []).filter(c => Number.isFinite(c.eq));
 const botWhy = { seen: 0, veto: 0, data: 0, filter: 0, ok: 0 };
 const pfSave = () => { try { localStorage.setItem(PF_KEY, JSON.stringify(pf)); } catch {} };
 setInterval(pfSave, 10000);
@@ -1236,7 +1245,7 @@ function pfOnOpen(t, id) {
 }
 function pfOnClose(t, id, raw, reason, now) {
   const key = t.mint + '|' + id, p = pf.positions[key]; if (!p) return;
-  const got = pfValue(p.inv, raw, STRAT.get(id)?.swing); pf.cash += got; delete pf.positions[key];
+  const got = pfValue(p.inv, Number.isFinite(raw) ? raw : 1, STRAT.get(id)?.swing); pf.cash += got; delete pf.positions[key];
   const eq = pfEquity(), pl = got - p.inv;
   pf.closed.unshift({ ts: now, symbol: p.symbol, mint: p.mint, id, inv: p.inv, got, reason, held: (now - p.at) / 1000, eqAfter: eq });
   pf.closed.length = Math.min(pf.closed.length, 500);
