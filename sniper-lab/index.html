@@ -484,7 +484,7 @@ const tokOut = t => { const { pos, decided, tk, csigs, ...r } = t; return { ...r
 function sessSave() {
   try {
     for (const p of Object.values(typeof pf !== 'undefined' && pf ? pf.positions : {})) { const t = tokens.get(p.mint); if (t) p.lastRaw = t.mcap / p.entry; }
-    const tk = [...tokens.values()].filter(t => t.phase === 'tracking').map(tokOut);
+    const tk = [...tokens.values()].filter(t => ['tracking', 'window', 'evaluating'].includes(t.phase)).map(tokOut);
     localStorage.setItem(SESS, JSON.stringify({ ts: Date.now(), running, seen, tk, logLines: logLines.slice(0, 80), tapeItems, stack: stack.slice(0, 30).map(({ tk, ...d }) => ({ ...d, mint: tk?.mint })),
       constel: constel.slice(0, 160).map(t => ({ mint: t.mint, symbol: t.symbol, state: t.state, ang: t.ang, f: t.f ? { score: t.f.score, uniqueBuyers: t.f.uniqueBuyers, vetoes: t.f.vetoes } : null, createdAt: t.createdAt })),
       series: Object.fromEntries(Object.entries(series).map(([k, m]) => [k, [...m]])) }));
@@ -495,6 +495,7 @@ if (sess && Date.now() - sess.ts < 6 * 3600e3) {
   const now = Date.now();
   for (const r of sess.tk || []) { if (now - r.createdAt > CFG.trackMaxMin * 60e3 + 10 * 60e3 && !(r.pos || []).length) continue;
     const t = { ...r, pos: new Map(r.pos || []), decided: new Set(r.decided || []), born: performance.now() - 5000, lastChange: Math.max(r.lastChange || now, now - 60e3) };
+    if (t.phase !== 'tracking') { if (now - t.createdAt > CFG.maxWaitSec * 1000) continue; t.phase = 'window'; setTimeout(() => evaluate(t.mint).catch(() => { t.state = 'skip'; tokens.delete(t.mint); }), 2000); }
     tokens.set(t.mint, t); }
   logLines.push(...(sess.logLines || [])); tapeItems.push(...(sess.tapeItems || [])); seen = sess.seen || 0;
   for (const c of sess.constel || []) constel.push(tokens.get(c.mint) || { ...c, phase: 'done', pos: new Map(), decided: new Set(), born: performance.now() - 5000 });
