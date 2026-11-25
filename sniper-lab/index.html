@@ -356,7 +356,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
     </section>
   </div>
   </div>
-<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button></div>
+<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button> <button id="dump" style="min-height:28px;font-size:11px;margin-left:6px">Descargar datos del bot (para Claude Code)</button></div>
 
 <script>
 {
@@ -1503,6 +1503,17 @@ for (const b of $('hrSeg').children) b.onclick = () => { if (b.disabled) return;
 $('play').onclick = () => setRunning(true);
 $('stop').onclick = () => setRunning(false);
 for (const b of $('hsel').querySelectorAll('button')) b.onclick = () => { hourMetric = b.dataset.v; for (const x of $('hsel').children) x.classList.toggle('on', x === b); render(); };
+// Exporta todo lo aprendido para analizarlo fuera (Claude Code). Nunca incluye la sesión de Telegram ni claves.
+$('dump').onclick = () => {
+  const tg = window.__tg?.st ? { calls: window.__tg.st.calls, chats: window.__tg.st.chats, sugg: window.__tg.st.sugg, ranking: window.__tg.ranking?.() } : null;
+  const strategies = STRATS.map(s => { const x = scoreOf(s.id), st = data.stats[s.id]; return { id: s.id, name: s.name, gen: !!s.gen, discarded: !!data.discarded[s.id], n: st.n, wins: st.wins, sum: +st.sum.toFixed(2), reasons: st.rs || {}, mean: x ? +x.mean.toFixed(2) : null, lb: x ? +x.lb.toFixed(2) : null }; });
+  const out = { exportedAt: new Date().toISOString(), version: 1, cfg: CFG, champ: data.champ, strategies, trades: data.trs || [], ideas: data.ideas, ai: data.ai, gen: data.gen, patternFilters: data.pf, hours: data.hours, reasons: data.reasons, totals: data.totals,
+    samples, patterns: { c: patterns.c, d: patterns.d, base0: patterns.base0, base1: patterns.base1 }, topWallets: topList, portfolio: { start: pf.start, cash: pf.cash, closed: pf.closed.slice(0, 200), strategy: pf.strategy }, telegram: tg,
+    swing: [...swing.values()].map(t => ({ mint: t.mint, symbol: t.symbol, dex: t.dex, liq: t.liq, volH1: t.volH1, ch1: t.ch1, ch6: t.ch6, sigs: t.sigs })) };
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+  a.download = `sniper-lab-datos-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  log('c', 'datos del bot descargados (sin sesión de Telegram ni claves)');
+};
 $('copy').onclick = async () => {
   const rows = ['estrategia,ops,acierto_pct,eur_op,minimo_fiable,total_eur', ...STRATS.map(s => { const x = scoreOf(s.id), st = data.stats[s.id]; return [JSON.stringify(s.name), st.n, x ? x.wr.toFixed(1) : '', x ? (x.mean / 100).toFixed(4) : '', x ? (x.lb / 100).toFixed(4) : '', (st.sum / 100).toFixed(2)].join(','); }),
     '', 'hora,tokens,pct_2x,pct_hundidos,pct_vetados', ...data.hours.map((h, i) => [i, h.tokens, h.done ? (100 * h.x2 / h.done).toFixed(1) : '', h.done ? (100 * h.rug / h.done).toFixed(1) : '', h.evald ? (100 * h.veto / h.evald).toFixed(1) : ''].join(','))].join('\n');
