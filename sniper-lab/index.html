@@ -467,7 +467,7 @@ const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
 // ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
 const C_FEATS = { devBuy: 'compra del creador (SOL)', copies: 'copias del nombre en 1 h', creatorLaunches: 'lanzamientos del creador en 1 h', symLen: 'letras del símbolo', nameWords: 'palabras del nombre', mayhem: 'modo mayhem' };
 const D_FEATS = { uniqueBuyers: 'compradores', buyVol: 'SOL comprados', score: 'riesgo (100 = limpio)', top10: '% en manos del top 10', sniperHeld: '% de francotiradores', slot0Pct: '% comprado en el primer bloque', devLaunchPct: '% del creador al lanzar', maxBuy: 'compra más grande (SOL)', smart: 'traders top dentro', bundleBuys: 'compras en el bloque inicial', decSec: 'segundos hasta tener datos', trades: 'operaciones al decidir', impact: 'caída si vende la mayor cartera', accel: 'compras acelerando', devSold: 'el creador ya vendió' };
-const fmtThr = v => Math.abs(v) < 1 && v !== 0 ? (v * (v < 1 && v > 0 && v <= 1 ? 1 : 1)).toFixed(2).replace('.', ',') : String(+v.toFixed(2)).replace('.', ',');
+const fmtThr = v => String(Math.abs(v) < 1 && v !== 0 ? +v.toPrecision(2) : +v.toFixed(2)).replace('.', ',');
 function regPatternFilter(d) {
   if (FMAP.has(d.id) || IFMAP.has(d.id)) return;
   const get = d.side === 'c' ? (x, t) => t?.[d.feat] : (x) => x?.[d.feat];
