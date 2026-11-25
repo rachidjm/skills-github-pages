@@ -338,6 +338,13 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
   </div>
   <div class="row r5">
     <section class="pn">
+      <h2>PATRONES DESCUBIERTOS <em id="ptTxt">aprendiendo</em></h2>
+      <div class="sub" style="margin-bottom:6px">El bot compra en papel cada moneda al instante y compara las que salen bien con las que no. <b>Al lanzar</b>: % que llegan a 2x desde el precio de entrada. <b>Al decidir</b>: % que llegan a 1,5x desde el precio a los 20 s–2 min. Los patrones fuertes se convierten solos en estrategias (✦).</div>
+      <div class="scroll" style="max-height:360px"><table><thead><tr><th>Cuándo</th><th>Patrón</th><th>Monedas</th><th>Aciertan</th><th>vs media</th><th>Estado</th></tr></thead><tbody id="ptRows"><tr><td colspan="6" style="color:var(--soft)">Hacen falta unas 120 monedas terminadas para empezar a comparar.</td></tr></tbody></table></div>
+    </section>
+  </div>
+  <div class="row r5">
+    <section class="pn">
       <h2>TRADERS TOP <em id="wTxt">calculado on-chain</em></h2>
       <div class="kpis"><div>CARTERAS<strong id="wK1">0</strong></div><div>MONEDAS PUNTUADAS<strong id="wK2">0</strong></div><div>EN EL TOP<strong id="wK3">0</strong></div><div>ENTRAN AHORA<strong id="wK4">0</strong></div></div>
       <div class="scroll" style="margin-top:10px"><table><thead><tr><th>#</th><th>Cartera</th><th>Monedas</th><th>Llega a 2x</th><th>Llega a 5x</th><th>Múltiplo típico</th><th>Días con aciertos</th><th>Fiable</th></tr></thead><tbody id="wRank"><tr><td colspan="8" style="color:var(--soft)">Aprendiendo: cada moneda que termina puntúa a sus primeros compradores. Hace falta que una cartera aparezca en 4+ monedas.</td></tr></tbody></table></div>
@@ -394,7 +401,8 @@ function pump() {
 
 // ===================== Estrategias =====================
 const ENTRIES = [{ id: 'info', txt: 'Al tener datos suficientes' }, { id: 'confirm', txt: 'Datos + 1 min de confirmación' },
-  { id: 'late8', txt: 'Superviviente a los 8 min', min: 8, up: 1.3 }, { id: 'late15', txt: 'Superviviente a los 15 min', min: 15, up: 1.5 }];
+  { id: 'late8', txt: 'Superviviente a los 8 min', min: 8, up: 1.3 }, { id: 'late15', txt: 'Superviviente a los 15 min', min: 15, up: 1.5 },
+  { id: 'instant', txt: 'Al instante (1–2 s tras lanzar)', instant: true }];
 const TPS = [1.5, 2, 3], SLS = [25, 40];
 const FILTERS = [
   { id: 'all', txt: 'todos', f: () => true },
@@ -422,7 +430,18 @@ const FILTERS = [
   { id: 'confluence', txt: 'confluencia: trader top + sin vetos + Telegram o X', f: x => (x.smart || 0) >= 1 && !x.vetoes.length && ((x.tgCalls || 0) >= 1 || !!x.xTrend || (x.xBig || 0) >= 1) },
 ];
 const STRATS = [];
-for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of FILTERS) {
+// Entrada al instante: solo se puede filtrar con lo que se sabe al lanzar (nada de mirar el futuro)
+const INST_FILTERS = [
+  { id: 'all', txt: 'todas', f: () => true },
+  { id: 'mayhem', txt: 'solo mayhem', f: (x, t) => t.mayhem },
+  { id: 'nomayhem', txt: 'sin mayhem', f: (x, t) => !t.mayhem },
+  { id: 'devbig', txt: 'creador compra ≥1 SOL', f: (x, t) => t.devBuy >= 1 },
+  { id: 'devsmall', txt: 'creador compra <0,3 SOL', f: (x, t) => t.devBuy < 0.3 },
+  { id: 'nocopy', txt: 'nombre único (sin copias en 1 h)', f: (x, t) => (t.copies || 1) <= 1 },
+  { id: 'noserial', txt: 'creador no en serie', f: (x, t) => (t.creatorLaunches || 1) <= 1 },
+];
+const IFMAP = new Map(INST_FILTERS.map(f => [f.id, f]));
+for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of (e.instant ? INST_FILTERS : FILTERS)) {
   STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.id, ent: e, tp, sl, filter: fl, name: `${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
 }
 // Monedas con volumen (ya crecidas): señales sobre su rango de la última hora
@@ -434,6 +453,17 @@ const STRAT = new Map(STRATS.map(s => [s.id, s]));
 const FMAP = new Map(FILTERS.map(f => [f.id, f]));
 // Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
 const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
+// ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
+const C_FEATS = { devBuy: 'compra del creador (SOL)', copies: 'copias del nombre en 1 h', creatorLaunches: 'lanzamientos del creador en 1 h', symLen: 'letras del símbolo', nameWords: 'palabras del nombre', mayhem: 'modo mayhem' };
+const D_FEATS = { uniqueBuyers: 'compradores', buyVol: 'SOL comprados', score: 'riesgo (100 = limpio)', top10: '% en manos del top 10', sniperHeld: '% de francotiradores', slot0Pct: '% comprado en el primer bloque', devLaunchPct: '% del creador al lanzar', maxBuy: 'compra más grande (SOL)', smart: 'traders top dentro', bundleBuys: 'compras en el bloque inicial', decSec: 'segundos hasta tener datos', trades: 'operaciones al decidir', impact: 'caída si vende la mayor cartera', accel: 'compras acelerando', devSold: 'el creador ya vendió' };
+const fmtThr = v => Math.abs(v) < 1 && v !== 0 ? (v * (v < 1 && v > 0 && v <= 1 ? 1 : 1)).toFixed(2).replace('.', ',') : String(+v.toFixed(2)).replace('.', ',');
+function regPatternFilter(d) {
+  if (FMAP.has(d.id) || IFMAP.has(d.id)) return;
+  const get = d.side === 'c' ? (x, t) => t?.[d.feat] : (x) => x?.[d.feat];
+  const f = d.dir === 'is' ? (x, t) => !!get(x, t) === d.thr : d.dir === 'ge' ? (x, t) => +get(x, t) >= d.thr : (x, t) => +get(x, t) <= d.thr;
+  const flt = { id: d.id, txt: d.txt, f, pattern: true };
+  (d.side === 'c' ? IFMAP : FMAP).set(d.id, flt);
+}
 function specOf(s) { return s.spec || (s.swing ? { entry: 'swing', sig: s.sig, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: s.hold, up: null, trail: null } : { entry: s.entry, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: CFG.holdMin, up: s.ent.up ?? null, trail: null }); }
 function genId(g) { return `g_${g.entry}${g.sig ? '-' + g.sig : ''}_tp${g.tp}_sl${g.sl}_h${g.hold}_u${g.up ?? 0}_tr${g.trail || 0}_${[...g.filters].sort().join('+')}`; }
 function addGen(g) {
@@ -447,7 +477,7 @@ function addGen(g) {
     STRATS.push(st); STRAT.set(st.id, st); return st;
   }
   const E = ENTRIES.find(e => e.id === g.entry); if (!E) return null;
-  const fs = g.filters.map(id => FMAP.get(id)).filter(Boolean); if (!fs.length) return null;
+  const FM = E.instant ? IFMAP : FMAP, fs = g.filters.map(id => FM.get(id)).filter(Boolean); if (!fs.length) return null;
   const ent = { ...E, up: g.up ?? E.up };
   const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
   const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true,
@@ -460,7 +490,8 @@ let data = { since: Date.now(), stats: {}, hours: [], champ: null, hist: [], cha
 try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.stats) data = { ...data, ...s }; } catch {}
 data.reasons ??= { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }; data.discarded ??= {}; data.totals ??= { seen: 0, veto: 0, entry: 0 }; data.last ??= [];
 data.hours = Array.from({ length: 24 }, (_, i) => ({ tokens: 0, x2: 0, rug: 0, vol: 0, done: 0, veto: 0, evald: 0, ...(data.hours?.[i] || {}) }));
-data.gen ??= []; data.ideas ??= [];
+data.gen ??= []; data.ideas ??= []; data.pf ??= [];
+for (const d of data.pf) regPatternFilter(d);
 for (const g of data.gen) addGen(g);
 for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
 const save = () => { try { localStorage.setItem(STORE, JSON.stringify(data)); } catch {} };
@@ -514,7 +545,7 @@ const tokOut = t => { const { pos, decided, tk, csigs, ...r } = t; return { ...r
 function sessSave() {
   try {
     for (const p of Object.values(typeof pf !== 'undefined' && pf ? pf.positions : {})) { const t = getTok(p.mint); if (t) p.lastRaw = t.mcap / p.entry; }
-    const tk = [...tokens.values()].filter(t => ['tracking', 'window', 'evaluating'].includes(t.phase)).map(tokOut);
+    const tk = [...tokens.values()].filter(t => ['tracking', 'window', 'evaluating', 'lite'].includes(t.phase)).map(tokOut);
     localStorage.setItem(SESS, JSON.stringify({ ts: Date.now(), running, seen, tk, logLines: logLines.slice(0, 80), tapeItems, stack: stack.slice(0, 30).map(({ tk, ...d }) => ({ ...d, mint: tk?.mint })),
       constel: constel.slice(0, 160).map(t => ({ mint: t.mint, symbol: t.symbol, state: t.state, ang: t.ang, f: t.f ? { score: t.f.score, uniqueBuyers: t.f.uniqueBuyers, vetoes: t.f.vetoes } : null, createdAt: t.createdAt })),
       series: Object.fromEntries(Object.entries(series).map(([k, m]) => [k, [...m]])), sw: [...swing.values()].map(t => ({ ...tokOut(t), s: t.s.slice(-400) })) }));
@@ -525,7 +556,7 @@ if (sess && Date.now() - sess.ts < 6 * 3600e3) {
   const now = Date.now();
   for (const r of sess.tk || []) { if (now - r.createdAt > CFG.trackMaxMin * 60e3 + 10 * 60e3 && !(r.pos || []).length) continue;
     const t = { ...r, pos: new Map(r.pos || []), decided: new Set(r.decided || []), born: performance.now() - 5000, lastChange: Math.max(r.lastChange || now, now - 60e3) };
-    if (t.phase !== 'tracking') { if (now - t.createdAt > CFG.maxWaitSec * 1000) continue; t.phase = 'window'; setTimeout(() => evaluate(t.mint).catch(() => { t.state = 'skip'; tokens.delete(t.mint); }), 2000); }
+    if (t.phase !== 'tracking') { if (now - t.createdAt > CFG.maxWaitSec * 1000) { if (!t.pos.size) continue; t.phase = 'lite'; } else { t.phase = 'window'; setTimeout(() => evaluate(t.mint).catch(() => dropToken(t)), 2000); } }
     tokens.set(t.mint, t); }
   logLines.push(...(sess.logLines || [])); tapeItems.push(...(sess.tapeItems || [])); seen = sess.seen || 0;
   for (const c of sess.constel || []) constel.push(tokens.get(c.mint) || { ...c, phase: 'done', pos: new Map(), decided: new Set(), born: performance.now() - 5000 });
@@ -541,6 +572,16 @@ function connect() {
   ws.onclose = () => { ws = null; if (running) setTimeout(() => running && connect(), 3000); };
   ws.onerror = () => {};
 }
+// Compra en papel 1–2 s después del lanzamiento, al precio real de la curva en ese momento
+async function instantEntry(t) {
+  const acc = await rpc('getMultipleAccounts', [[t.bc], { encoding: 'base64' }], true);
+  const cur = acc?.value?.[0] ? curveRead(acc.value[0].data[0]) : null; if (!cur?.mcap) return;
+  const now = Date.now(); t.mcap = cur.mcap; t.entry0 = cur.mcap; t.max0 = cur.mcap; t.lastChange = now;
+  if (!running) return;
+  for (const s of STRATS) { if (!s.ent?.instant || data.discarded[s.id] || t.pos.has(s.id) || !s.filter.f({}, t)) continue; t.pos.set(s.id, { entry: cur.mcap, at: now, exiting: null, trig: 0 }); t.decided.add(s.id); pfOnOpen(t, s.id); }
+}
+// Si el análisis falla, la moneda se sigue vigilando mientras tenga posiciones abiertas
+function dropToken(t) { t.state = 'skip'; if (t.pos.size) t.phase = 'lite'; else tokens.delete(t.mint); }
 function onCreate(e) {
   const now = Date.now(), nm = String(e.name || '').trim().toLowerCase();
   names.set(nm, [...(names.get(nm) || []).filter(t => now - t < 3600e3), now]);
@@ -555,7 +596,8 @@ function onCreate(e) {
   if (t.creatorLaunches > 2) log('a', `NEW ${esc(t.symbol)} · el creador lleva ${t.creatorLaunches} lanzamientos en 1 h`);
   else log('c', `NEW ${esc(t.symbol)} · ${t.mayhem ? 'modo mayhem · ' : ''}creador compra ${t.devBuy.toFixed(2)} SOL`);
   tape('c', 'NEW', `$${t.symbol}`);
-  setTimeout(() => evaluate(e.mint).catch(() => { t.state = 'skip'; tokens.delete(e.mint); }), CFG.windowSec * 1000);
+  instantEntry(t).catch(() => {});
+  setTimeout(() => evaluate(e.mint).catch(() => dropToken(t)), CFG.windowSec * 1000);
 }
 
 // ===================== Fuente 2: blockchain (nodo público) =====================
@@ -619,7 +661,7 @@ async function evaluate(mint) {
     const similar = grp.filter(x => med > 0 && Math.abs(x.sol - med) <= 0.3 * med);
     pack = Math.max(pack, similar.length);
   }
-  t.early = firsts.slice(0, 30).map(x => ({ u: x.user, m: x.mcap })); t.peakT = Math.max(0, ...trades.map(x => x.mcap || 0));
+  t.early = firsts.slice(0, 30).map(x => ({ u: x.user, m: x.mcap })); t.peakT = Math.max(0, ...trades.map(x => x.mcap || 0)); t.max0 = Math.max(t.max0 || 0, t.peakT);
   const f = {
     uniqueBuyers: byUser.size, buyVol: +buyVol.toFixed(3), devSold: sells.some(x => x.user === t.creator), devBuy: t.devBuy,
     creatorTx: (csigs || []).length, creatorLaunches: t.creatorLaunches, bundleBuys: createSlot ? ext.filter(x => x.slot === createSlot).length : 0,
@@ -644,7 +686,7 @@ async function evaluate(mint) {
   f.enough = f.uniqueBuyers >= CFG.minBuyers && trades.length >= CFG.minTrades; f.trades = trades.length; f.decSec = age;
   if (!f.enough && !v.length && age + CFG.recheckSec <= CFG.maxWaitSec) {
     t.phase = 'window'; t.state = 'eval';
-    setTimeout(() => evaluate(mint).catch(() => { t.state = 'skip'; tokens.delete(mint); }), CFG.recheckSec * 1000);
+    setTimeout(() => evaluate(mint).catch(() => dropToken(t)), CFG.recheckSec * 1000);
     return;
   }
   f.tgCalls = t.tgCalls || 0;
@@ -672,7 +714,7 @@ function tryEntries(t, now) {
   const alive = now - t.lastChange < 120e3;
   const open = s => { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); };
   for (const s of STRATS) {
-    if (s.swing) continue;
+    if (s.swing || s.ent.instant) continue;
     if (t.decided.has(s.id)) continue;
     if (data.discarded[s.id]) { t.decided.add(s.id); continue; }   // descartada: ya no se prueba
     if (s.ent.min) {                     // entrada tardía: solo monedas que siguen vivas, subiendo y cerca de máximos
@@ -730,24 +772,30 @@ function record(id, net, t, reason, now, p) {
 }
 function finishToken(t) {
   const H = data.hours[t.hour]; H.done++; if (t.max / t.m20 >= 2) H.x2++; if (t.min / t.m20 <= 0.5) H.rug++;
-  scoreWallets(t);
+  scoreWallets(t); addSample(t);
   t.phase = 'done'; tokens.delete(t.mint);
 }
 
 // ===================== Lectura de precios (curva on-chain, 10 cuentas por llamada) =====================
 async function poll() {
   const nowL = Date.now(), light = t => !t.pos.size && nowL - (t.decAt || nowL) > (CFG.confirmSec + 70) * 1000;
-  const list = [...tokens.values()].filter(t => t.phase === 'tracking' && (!light(t) || nowL - (t.lp || 0) > 15000));
+  const list = [...tokens.values()].filter(t => (t.phase === 'tracking' && (!light(t) || nowL - (t.lp || 0) > 15000)) || (t.phase !== 'tracking' && t.phase !== 'done' && t.pos.size));
   for (const t of list) t.lp = nowL;
   for (let i = 0; i < list.length; i += 10) {
     const chunk = list.slice(i, i + 10);
     let res; try { res = await rpc('getMultipleAccounts', [chunk.map(t => t.bc), { encoding: 'base64' }], true); } catch { continue; }
     const now = Date.now();
     chunk.forEach((t, k) => {
-      const a = res?.value?.[k]; if (!a || t.phase !== 'tracking') return;
+      const a = res?.value?.[k]; if (!a || t.phase === 'done') return;
       const { mcap } = curveRead(a.data[0]); if (!mcap) return;
       if (Math.abs(mcap - t.mcap) / t.mcap > 0.001) t.lastChange = now;
-      t.mcap = mcap; t.max = Math.max(t.max, mcap); t.min = Math.min(t.min, mcap);
+      t.mcap = mcap; t.max0 = Math.max(t.max0 || 0, mcap);
+      if (t.phase !== 'tracking') {   // aún analizándose: solo se gestionan sus posiciones al instante
+        settle(t, now, now - t.lastChange > CFG.inactiveMin * 60e3);
+        if (t.phase === 'lite' && !t.pos.size) tokens.delete(t.mint);
+        return;
+      }
+      t.max = Math.max(t.max, mcap); t.min = Math.min(t.min, mcap);
       tryEntries(t, now);
       const inactive = now - t.lastChange > CFG.inactiveMin * 60e3;
       settle(t, now, inactive);
@@ -787,6 +835,57 @@ function scoreWallets(t) {
   }
   wScored++;
 }
+
+// ===================== Minería de patrones: qué tienen las monedas que sí suben =====================
+// Cada moneda que termina deja una muestra: sus rasgos al lanzar y al decidir, y lo que hizo después.
+// Se compara cada rasgo contra la media; si un rasgo predice bien, se crea sola una estrategia con él.
+const SKEY = 'snlab_samples_v1';
+let samples = []; try { samples = JSON.parse(localStorage.getItem(SKEY)) || []; } catch {}
+let patterns = { c: [], d: [], base0: 0, base1: 0, n0: 0, n1: 0 };
+function addSample(t) {
+  if (!t.entry0 && !t.m20) return;
+  const c = { devBuy: +t.devBuy || 0, copies: t.copies || 1, creatorLaunches: t.creatorLaunches || 1, symLen: (t.symbol || '').length, nameWords: (t.name || '').trim().split(/\s+/).length, mayhem: !!t.mayhem };
+  const f = t.f, d = f ? Object.fromEntries(Object.keys(D_FEATS).map(k => [k, typeof f[k] === 'boolean' ? f[k] : +(+f[k] || 0).toFixed(4)])) : null;
+  samples.push({ ts: Date.now(), c, d, y0: t.entry0 ? +((t.max0 || t.entry0) / t.entry0).toFixed(3) : null, y1: t.m20 ? +(t.max / t.m20).toFixed(3) : null });
+  if (samples.length > 4000) samples.splice(0, samples.length - 4000);
+}
+setInterval(() => { try { localStorage.setItem(SKEY, JSON.stringify(samples)); } catch {} }, 30000);
+function minePatterns() {
+  const out = { c: [], d: [] };
+  for (const side of ['c', 'd']) {
+    const pop = samples.filter(x => side === 'c' ? x.y0 != null : x.d && x.y1 != null), lab = side === 'c' ? x => x.y0 >= 2 : x => x.y1 >= 1.5;
+    if (pop.length < 120) { patterns['n' + (side === 'c' ? 0 : 1)] = pop.length; continue; }
+    const base = pop.filter(lab).length / pop.length; patterns[side === 'c' ? 'base0' : 'base1'] = base; patterns[side === 'c' ? 'n0' : 'n1'] = pop.length;
+    for (const [feat, label] of Object.entries(side === 'c' ? C_FEATS : D_FEATS)) {
+      const vals = pop.map(x => x[side][feat]);
+      const tests = [];
+      if (typeof vals[0] === 'boolean') tests.push(['is', true, `${label}`], ['is', false, `sin ${label}`]);
+      else { const v = vals.filter(Number.isFinite).sort((a, b) => a - b); if (v.length < 60) continue; const q1 = v[Math.floor(v.length / 3)], q2 = v[Math.floor(2 * v.length / 3)];
+        if (q2 > v[0]) tests.push(['ge', q2, `${label} ≥ ${fmtThr(q2)}`]); if (q1 < v.at(-1)) tests.push(['le', q1, `${label} ≤ ${fmtThr(q1)}`]); }
+      for (const [dir, thr, txt] of tests) {
+        const sub = pop.filter(x => { const y = x[side][feat]; return dir === 'is' ? !!y === thr : dir === 'ge' ? y >= thr : y <= thr; });
+        if (sub.length < 30) continue;
+        const k = sub.filter(lab).length, pr = k / sub.length;
+        out[side].push({ side, feat, dir, thr, txt, n: sub.length, p: pr, lb: wilson(k, sub.length), lift: base ? pr / base : 0, id: `pt_${side}_${feat}_${dir}_${String(thr).replace('.', 'p')}` });
+      }
+    }
+    out[side].sort((a, b) => b.lb - a.lb);
+  }
+  patterns.c = out.c; patterns.d = out.d;
+  // Patrones fuertes → estrategia nueva (máximo 2 por pasada y 40 en total)
+  let made = 0;
+  for (const pt of [...out.c.slice(0, 3), ...out.d.slice(0, 3)]) {
+    const base = pt.side === 'c' ? patterns.base0 : patterns.base1;
+    if (made >= 2 || data.pf.length >= 40 || pt.lift < 1.4 || pt.lb < base * 1.15 || data.pf.some(x => x.id === pt.id)) continue;
+    const d = { id: pt.id, side: pt.side, feat: pt.feat, dir: pt.dir, thr: pt.thr, txt: pt.txt }; data.pf.push(d); regPatternFilter(d);
+    const g = pt.side === 'c' ? { entry: 'instant', tp: 2, sl: 40, filters: [pt.id], hold: CFG.holdMin, up: null, trail: null } : { entry: 'info', tp: 1.5, sl: 25, filters: [pt.id], hold: CFG.holdMin, up: null, trail: null };
+    g.id = genId(g); if (STRAT.has(g.id) || data.discarded[g.id]) continue;
+    g.parent = null; g.ts = Date.now(); g.why = `PATRÓN: ${pt.txt} → ${Math.round(pt.p * 100)}% llegan a ${pt.side === 'c' ? '2x' : '1,5x'} (media ${Math.round(base * 100)}%, ${pt.n} monedas)`;
+    if (registerGen(g, { name: pt.side === 'c' ? 'patrones al lanzar' : 'patrones al decidir' })) made++;
+  }
+  if (made) { save(); fillStratSelect(); }
+}
+setInterval(minePatterns, 5 * 60e3); setTimeout(minePatterns, 20e3);
 
 // ===================== Campeón =====================
 function scoreOf(id) {
@@ -833,7 +932,7 @@ function innovate() {
     if (tot < 10) continue;
     const fs = (rs.stop || 0) / tot, fo = (rs.objetivo || 0) / tot, ft = ((rs.tiempo || 0) + (rs['sin actividad'] || 0)) / tot;
     const base = specOf(s), ideas = [];
-    const M = s.swing ? SWF : FMAP, extra = (s.swing ? ['trend', 'liq100'] : ['clean', 'smart', 'accel', 'devok', 'score60']).find(f => !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : 'clean')));
+    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'clean')));
     const tr = (data.trs || []).filter(x => x.id === b.id), wentUp = tr.filter(x => x.reason === 'stop' && x.mfe >= 1.1).length;
     if (fs >= 0.5) {
       if (base.sl < 60) ideas.push([{ ...base, sl: Math.min(60, base.sl + 15) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → stop más holgado`]);
@@ -965,9 +1064,9 @@ function aiApply(item) {
   else if (a.tipo === 'tp') g.tp = +cl(+v, 1.03, 10).toFixed(2);
   else if (a.tipo === 'hold') g.hold = cl(Math.round(+v), 5, 120);
   else if (a.tipo === 'trail') g.trail = cl(Math.round(+v), 3, 50);
-  else if (a.tipo === 'entry') { if (s.swing || !ENTRIES.some(e => e.id === v)) return 'entrada no válida'; g.entry = v; }
+  else if (a.tipo === 'entry') { if (s.swing || s.ent.instant || v === 'instant' || !ENTRIES.some(e => e.id === v)) return 'entrada no válida'; g.entry = v; }
   else if (a.tipo === 'up') { if (s.swing) return 'no aplica'; g.up = +cl(+v, 1.1, 3).toFixed(1); }
-  else if (a.tipo === 'add_filter') { const M = s.swing ? SWF : FMAP; if (!M.has(v) || g.filters.includes(v)) return 'filtro no válido'; g.filters = g.filters.filter(f => f !== 'all').concat(v); }
+  else if (a.tipo === 'add_filter') { const M = s.swing ? SWF : s.ent.instant ? IFMAP : FMAP; if (!M.has(v) || g.filters.includes(v)) return 'filtro no válido'; g.filters = g.filters.filter(f => f !== 'all').concat(v); }
   else if (a.tipo === 'remove_filter') { if (!g.filters.includes(v) || g.filters.length < 2) return 'no se puede quitar'; g.filters = g.filters.filter(f => f !== v); }
   else return 'arreglo no permitido';
   if (Object.values(g).some(x => typeof x === 'number' && !Number.isFinite(x))) return 'valor no válido';
@@ -1363,6 +1462,10 @@ function render() {
   renderWallets();
   renderSwing();
   renderAI();
+  { const all = [...patterns.c.slice(0, 8), ...patterns.d.slice(0, 8)].sort((a, b) => b.lift - a.lift);
+    $('ptTxt').textContent = `${samples.length} monedas analizadas · media al lanzar ${patterns.n0 >= 120 ? Math.round(patterns.base0 * 100) + '%' : '…'} · al decidir ${patterns.n1 >= 120 ? Math.round(patterns.base1 * 100) + '%' : '…'}`;
+    if (all.length) $('ptRows').innerHTML = all.map(pt => { const g = data.gen.find(x => x.filters?.includes(pt.id)), k = g && scoreOf(g.id);
+      return `<tr${pt.lift >= 1.4 ? ' class="ch"' : ''}><td>${pt.side === 'c' ? 'al lanzar' : 'al decidir'}</td><td>${esc(pt.txt)}</td><td>${pt.n}</td><td>${Math.round(pt.p * 100)}%</td><td style="color:${pt.lift >= 1 ? 'var(--g)' : 'var(--r)'}">${pt.lift.toFixed(2).replace('.', ',')}x</td><td>${g ? (data.discarded[g.id] ? 'estrategia descartada' : k ? `✦ ${k.n} ops · ${eur(k.mean / 100)}/op` : '✦ estrategia creada') : '–'}</td></tr>`; }).join(''); }
   { const c = $('swChip'); c.textContent = swing.size ? `Monedas con volumen · ${swing.size}` : 'Monedas con volumen · –'; c.className = swing.size ? 'on' : ''; }
   $('ideas').innerHTML = data.ideas.length ? '<div class="sub" style="color:var(--ink);font-weight:700;margin-bottom:4px">IDEAS DEL BOT · estrategias inventadas</div>' + data.ideas.slice(0, 4).map(i => { const x = scoreOf(i.id); return `<div class="sub" style="margin-top:3px">✦ ${esc(i.why)} <span style="color:var(--dim)">· ${data.discarded[i.id] ? 'descartada' : x ? `${x.n} ops, ${eur(x.mean / 100)}/op` : 'sin operaciones aún'}</span></div>`; }).join('') : '<div class="sub" style="color:var(--dim)">El bot inventará variantes de las mejores estrategias en cuanto tengan 15+ operaciones.</div>';
   renderBot();
