@@ -370,7 +370,8 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 {
 // ===================== Configuración =====================
 const CFG = { sizeEur: 10, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
-  feePct: 1.25, slipPct: 1,   // 1,25% de la curva de Pump.fun; PumpPortal solo se usa como radar (en real se compraría directo) netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
+  // feePct 1,25% = curva de Pump.fun; PumpPortal solo se usa como radar (en real se compraría directo)
+  feePct: 1.25, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
   minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 20 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
 let solEur = 130;
@@ -393,15 +394,16 @@ const madridHour = ts => Number(madrid(ts, { hour: 'numeric', hourCycle: 'h23' }
 const lin = (v, full, zero) => Math.max(0, Math.min(1, (zero - v) / (zero - full)));   // 1 en "full", 0 en "zero"
 
 // ===================== RPC con cola y prioridad =====================
-let inFlight = 0, rpcCalls = 0, rpcErrors = 0; const queue = [];
+let inFlight = 0, rpcCalls = 0, rpcErrors = 0; const queue = []; const rpcLimitAt = [], rpcNetErrAt = [];
 function rpc(method, params, urgent = false) {
   return new Promise((resolve, reject) => { const job = { method, params, resolve, reject, tries: 0 }; urgent ? queue.unshift(job) : queue.push(job); pump(); });
 }
 function pump() {
   while (inFlight < CFG.concurrency && queue.length) {
     const job = queue.shift(); inFlight++;
-    fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: job.method, params: job.params }) })
-      .then(r => r.status === 429 ? Promise.reject(new Error('429')) : r.json())
+    const ac = new AbortController(), to = setTimeout(() => ac.abort(), 10000);   // una petición colgada no bloquea la cola
+    fetch(RPC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: job.method, params: job.params }), signal: ac.signal })
+      .then(r => { clearTimeout(to); if (r.status === 429 || r.status === 403) { rpcLimitAt.push(Date.now()); return Promise.reject(new Error('límite ' + r.status)); } return r.json(); }, e => { clearTimeout(to); rpcNetErrAt.push(Date.now()); throw e; })
       .then(j => { rpcCalls++; rpcOkAt = Date.now(); if (j.error) throw new Error(j.error.message); job.resolve(j.result); })
       .catch(async e => { rpcErrors++; if (++job.tries < 3) { await sleep(1500 * job.tries); queue.push(job); } else job.reject(e); })
       .finally(() => { inFlight--; pump(); });
@@ -582,7 +584,13 @@ function tape(cls, label, txt) { tapeItems.unshift(`<b class="${cls}">${label}</
 
 // ===================== Fuente 1: tokens nuevos (PumpPortal, gratis) =====================
 const tokens = new Map(), creators = new Map(), names = new Map();
-let running = false, ws = null, seen = 0, wsOk = false, startedAt = 0, wsFails = 0, lastWsMsg = 0, rpcOkAt = 0;
+let running = false, ws = null, seen = 0, wsOk = false, startedAt = 0, wsFails = 0, lastWsMsg = 0, rpcOkAt = 0, wsCloses = [];
+// Otro bot abierto en este mismo navegador: cada pestaña deja un latido; si hay otro reciente, se avisa y esta no arranca
+const TAB_ID = Math.random().toString(36).slice(2), HB = 'snlab_tab_heartbeat';
+let otherTab = false;
+function heartbeat() { try { const o = JSON.parse(localStorage.getItem(HB) || 'null'); otherTab = !!(o && o.id !== TAB_ID && Date.now() - o.ts < 12000 && o.running); if (!otherTab || !running) { if (!otherTab) localStorage.setItem(HB, JSON.stringify({ id: TAB_ID, ts: Date.now(), running })); } } catch {} }
+heartbeat(); setInterval(heartbeat, 4000);
+addEventListener('pagehide', () => { try { const o = JSON.parse(localStorage.getItem(HB) || 'null'); if (o?.id === TAB_ID) localStorage.removeItem(HB); } catch {} });
 // ===================== Sesión: lo que está pasando ahora sobrevive a recargar la página =====================
 const SESS = 'snlab_session_v1';
 const tokOut = t => { const { pos, decided, tk, csigs, ...r } = t; return { ...r, pos: [...pos], decided: [...decided] }; };
@@ -613,7 +621,7 @@ function connect() {
   ws = new WebSocket(PP);
   ws.onopen = () => { wsOk = true; wsFails = 0; lastWsMsg = Date.now(); ws.send(JSON.stringify({ method: 'subscribeNewToken' })); ws.send(JSON.stringify({ method: 'subscribeMigration' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
   ws.onmessage = m => { lastWsMsg = Date.now(); let e; try { e = JSON.parse(m.data); } catch { return; } if (e.txType === 'create') onCreate(e); else if (e.txType === 'migrate' || e.txType === 'migration' || (e.mint && /migrat/i.test(String(e.txType || e.type || '')))) onMigrate(e); };
-  ws.onclose = () => { ws = null; wsOk = false; wsFails++; if (running) setTimeout(() => running && connect(), Math.min(30000, 3000 * wsFails)); };
+  ws.onclose = c => { ws = null; wsOk = false; wsFails++; wsCloses.push({ ts: Date.now(), code: c?.code }); if (running) setTimeout(() => running && connect(), Math.min(30000, 3000 * wsFails)); };
   ws.onerror = () => {};
 }
 // Compra en papel 1–2 s después del lanzamiento, al precio real de la curva en ese momento
@@ -1200,6 +1208,8 @@ function renderAI() {
 }
 
 function setRunning(v) {
+  if (v) heartbeat();
+  if (v && otherTab) { log('r', 'Hay otro Sniper Lab funcionando en otra pestaña de este navegador: ciérrala o páusala antes de arrancar este.'); toast?.('Ya hay otro bot abierto en otra pestaña: ciérralo primero'); return; }
   running = v; if (v && !startedAt) startedAt = Date.now();
   if (v) { if (!ws) connect(); log('g', 'PLAY · bot en marcha'); if (!swing.size || Date.now() - swLastRefresh > 15 * 60e3) setTimeout(() => swRefresh().catch(() => {}), 3000); }
   else { if (ws) { ws.onclose = null; ws.close(); ws = null; } log('a', 'STOP · no entra en tokens nuevos; las posiciones abiertas se siguen gestionando'); }
@@ -1490,8 +1500,18 @@ function render() {
 }
 function renderMain() {
   const runFor = running && startedAt ? Date.now() - startedAt : 0, wsDown = runFor > 20000 && Date.now() - (lastWsMsg || startedAt) > 90000, rpcDown = runFor > 60000 && Date.now() - (rpcOkAt || startedAt) > 90000;
-  const noConn = wsDown || rpcDown;
-  if (noConn) $('warn').innerHTML = `<b>Sin conexión con ${wsDown && rpcDown ? 'PumpPortal ni con el nodo de Solana' : wsDown ? 'PumpPortal (lanzamientos nuevos)' : 'el nodo de Solana (precios y operaciones)'}</b> desde hace ${Math.round((Date.now() - ((wsDown ? lastWsMsg : rpcOkAt) || startedAt)) / 1000)} s. Si tienes el bot abierto en otra pestaña, navegador o en la app de Claude, ciérralo: dos bots desde la misma conexión hacen que corten uno. El bot reintenta solo.`;
+  const now5 = Date.now(), lim = rpcLimitAt.filter(t => now5 - t < 120000).length, net = rpcNetErrAt.filter(t => now5 - t < 120000).length, closes = wsCloses.filter(c => now5 - c.ts < 300000).length;
+  const noConn = wsDown || rpcDown || otherTab;
+  if (noConn) {
+    const ago = s => Math.round((now5 - (s || startedAt)) / 1000);
+    let msg;
+    if (otherTab) msg = '<b>Hay otro Sniper Lab abierto en otra pestaña de este navegador.</b> Dos bots a la vez hacen que el nodo y PumpPortal corten la conexión. Cierra una de las dos pestañas.';
+    else if (rpcDown && lim >= 3) msg = `<b>El nodo gratuito de Solana está limitando las peticiones</b> (${lim} avisos de límite en los últimos 2 min, sin respuestas desde hace ${ago(rpcOkAt)} s). Suele pasar si hay otro bot usando tu misma conexión (otro navegador, otro PC de tu red o la app de Claude). Si no lo hay, es saturación temporal del nodo: el bot reintenta solo.`;
+    else if (rpcDown && net >= 3) msg = `<b>No se llega al nodo de Solana</b> (${net} errores de red en 2 min). Revisa tu conexión a internet o un bloqueador/antivirus; el bot reintenta solo.`;
+    else if (rpcDown) msg = `<b>El nodo de Solana no ha respondido desde hace ${ago(rpcOkAt)} s</b> y no ha dado aviso de límite ni de red${rpcCalls + rpcErrors === 0 ? ': el bot no está enviando peticiones (fallo interno, avisa a Claude)' : ''}.`;
+    else msg = `<b>PumpPortal no envía lanzamientos desde hace ${ago(lastWsMsg)} s</b>${closes >= 3 ? ` y ha cortado la conexión ${closes} veces en 5 min: suele ser por otro bot usando tu misma conexión` : ''}. El bot reintenta solo.`;
+    $('warn').innerHTML = msg;
+  }
   $('live').className = 'live' + (running && !noConn ? ' on' : ''); $('liveTxt').textContent = noConn ? 'SIN CONEXIÓN' : running ? 'EN VIVO' : 'PAUSA';
   $('warn').style.display = noConn ? 'block' : 'none';
   $('play').disabled = running; $('stop').disabled = !running;
