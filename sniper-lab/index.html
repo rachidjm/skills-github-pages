@@ -47,6 +47,8 @@ button:disabled{opacity:.35;cursor:default}
 .r3{grid-template-columns:minmax(0,5fr) minmax(0,4fr) minmax(0,4fr)}
 .r4{grid-template-columns:minmax(0,4fr) minmax(0,8fr)}
 [hidden]{display:none!important}
+.dg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.dg h3{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.05em;margin:0 0 6px}.dg ol{margin:0;padding-left:18px}.dg li{font-size:13px;line-height:1.45;margin-bottom:7px}.dg li b{color:var(--ink)}.dg li span{color:var(--soft)}
+@media(max-width:1100px){.dg{grid-template-columns:minmax(0,1fr)}}
 *{scrollbar-width:thin;scrollbar-color:#24324f transparent}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-corner{background:transparent}
 ::-webkit-scrollbar-thumb{background:#24324f;border-radius:8px;border:2px solid transparent;background-clip:padding-box}::-webkit-scrollbar-thumb:hover{background:#3a5a9a;background-clip:padding-box;border:2px solid transparent}
@@ -232,6 +234,12 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 
 <div class="wrap view" id="viewLab">
   <div class="warn" id="warnLab" style="display:none"></div>
+  <div class="row" style="margin-bottom:12px">
+    <section class="pn">
+      <h2>DIAGNÓSTICO <em id="dgTxt">por qué falla y qué le falta · se actualiza solo</em></h2>
+      <div class="dg" id="dgBody"><div class="sub">Calculando con las operaciones registradas…</div></div>
+    </section>
+  </div>
 
   <div class="row r1">
     <section class="pn">
@@ -356,12 +364,12 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
     </section>
   </div>
   </div>
-<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 1 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button> <button id="dump" style="min-height:28px;font-size:11px;margin-left:6px">Descargar datos del bot (para Claude Code)</button></div>
+<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 10 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button> <button id="dump" style="min-height:28px;font-size:11px;margin-left:6px">Descargar datos del bot (para Claude Code)</button></div>
 
 <script>
 {
 // ===================== Configuración =====================
-const CFG = { sizeEur: 1, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
+const CFG = { sizeEur: 10, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
   feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
   minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 20 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
@@ -423,6 +431,9 @@ const FILTERS = [
   { id: 'xbuzz', txt: 'mencionado en X por cuentas con 1.000+ seguidores', f: x => (x.xBig || 0) >= 1 },
   // Nuevo: llamadas de comunidades de Telegram
   { id: 'tgcall', txt: 'llamada en Telegram antes de entrar', f: x => (x.tgCalls || 0) >= 1 },
+  // Nuevo: evitar monedas muertas (la causa nº 1 de pérdidas): exige actividad en los últimos 30 s
+  { id: 'active', txt: 'con actividad: 3+ operaciones en los últimos 30 s', f: x => (x.recent30 || 0) >= 3 },
+  { id: 'active_clean', txt: 'con actividad y sin vetos', f: x => (x.recent30 || 0) >= 3 && !x.vetoes.length },
   // Nuevos: traders top (ranking propio calculado on-chain) y confluencia de fuentes
   { id: 'smart', txt: '1+ trader top entre los primeros compradores', f: x => (x.smart || 0) >= 1 },
   { id: 'smart2', txt: '2+ traders top entre los primeros compradores', f: x => (x.smart || 0) >= 2 },
@@ -667,6 +678,7 @@ async function evaluate(mint) {
     creatorTx: (csigs || []).length, creatorLaunches: t.creatorLaunches, bundleBuys: createSlot ? ext.filter(x => x.slot === createSlot).length : 0,
     accel: buys.filter(x => x.ts > half).length > buys.filter(x => x.ts <= half).length, maxBuy: Math.max(0, ...ext.map(x => x.sol)), copies: t.copies, mayhem: t.mayhem,
     devLaunchPct: t.devTokens / CFG.supply, slot0Pct: slot0Tokens / CFG.supply, top10, impact, sniperHeld, devHeld, sameTx, pack,
+    recent30: trades.filter(x => x.ts >= tEnd - 30).length,
   };
   // Puntuación de riesgo 0–100 (100 = más limpio). Pesos propios inspirados en reglas públicas de escáneres de holders
   f.score = f.uniqueBuyers < 3 ? 0 : Math.round(35 * lin(impact, 0.10, 0.60) + 20 * lin(f.slot0Pct, 0.05, 0.30) + 15 * lin(sniperHeld, 0.01, 0.15) + 15 * lin(top10, 0.25, 0.70) + 15 * lin(f.devLaunchPct, 0.03, 0.15));
@@ -1462,6 +1474,7 @@ function render() {
   renderWallets();
   renderSwing();
   renderAI();
+  renderDiag();
   { const all = [...patterns.c.slice(0, 8), ...patterns.d.slice(0, 8)].sort((a, b) => b.lift - a.lift);
     $('ptTxt').textContent = `${samples.length} monedas analizadas · media al lanzar ${patterns.n0 >= 120 ? Math.round(patterns.base0 * 100) + '%' : '…'} · al decidir ${patterns.n1 >= 120 ? Math.round(patterns.base1 * 100) + '%' : '…'}`;
     if (all.length) $('ptRows').innerHTML = all.map(pt => { const g = data.gen.find(x => x.filters?.includes(pt.id)), k = g && scoreOf(g.id);
@@ -1474,6 +1487,54 @@ function render() {
   if (tp && tp !== lastTape) { lastTape = tp; $('tape').innerHTML = tp + ` &nbsp;·&nbsp; <b class="c">RPC</b> ${rpcCalls} lecturas`; }
 }
 
+// ===================== Diagnóstico automático (sin IA): por qué falla y qué le falta =====================
+let dgCache = '', dgAt = 0;
+function diagnose() {
+  const fam = s => s.swing ? 'volumen' : s.ent?.instant ? 'instante' : s.entry;
+  const FN = { instante: 'compra al instante', info: 'entrada con datos', confirm: 'datos + confirmación', late8: 'superviviente a los 8 min', late15: 'superviviente a los 15 min', volumen: 'monedas con volumen' };
+  const g = {};
+  for (const s of STRATS) { const st = data.stats[s.id]; if (!st?.n) continue; const k = fam(s), o = g[k] || (g[k] = { n: 0, w: 0, sum: 0, rs: {} }); o.n += st.n; o.w += st.wins; o.sum += st.sum; for (const [r, c] of Object.entries(st.rs || {})) o.rs[r] = (o.rs[r] || 0) + c; }
+  const why = [], need = [], good = [], P = (a, b) => b ? Math.round(100 * a / b) : 0;
+  const all = Object.values(g).reduce((a, o) => { for (const [r, c] of Object.entries(o.rs)) a[r] = (a[r] || 0) + c; return a; }, {}), allN = Object.values(all).reduce((a, b) => a + b, 0);
+  const trs = data.trs || [], stops = trs.filter(t => t.reason === 'stop'), stopUp = stops.filter(t => t.mfe >= 1.1);
+  if (allN < 50) return { why: [['Aún hay pocas operaciones', `llevamos ${allN} con motivo registrado; el diagnóstico se afina a partir de ~50`]], need: [], good: [] };
+  // 1. Monedas muertas
+  const dead = all['sin actividad'] || 0;
+  if (P(dead, allN) >= 25) { why.push(['Compra monedas que mueren', `${P(dead, allN)}% de las operaciones terminan "sin actividad": nadie vuelve a comprar y se sale perdiendo las comisiones${g.instante ? ` (en la compra al instante, ${P(g.instante.rs['sin actividad'] || 0, Object.values(g.instante.rs).reduce((a, b) => a + b, 0))}%)` : ''}`]);
+    need.push(['Saber si una moneda sigue viva antes de entrar', 'filtro nuevo "con actividad" (3+ operaciones en los últimos 30 s) ya en el torneo; con un RPC de pago se podría leer cada operación en directo']); }
+  // 2. Comisiones
+  const c1 = (CFG.feePct + CFG.slipPct) * 2 + 200 * CFG.netFeeSol * solEur / CFG.sizeEur;
+  why.push(['Las comisiones son muy altas en monedas nuevas', `comprar y vender en Pump.fun cuesta ~${c1.toFixed(1)}% (comisión 1,25% + PumpPortal + deslizamiento + red, por ${CFG.sizeEur} €); una moneda que no se mueve ya pierde eso. En monedas con volumen cuesta ~${((SWC.fee + SWC.slip) * 2 + 200 * CFG.netFeeSol * solEur / SWC.notional).toFixed(1)}%`]);
+  // 3. Stops después de ir ganando
+  if (stops.length >= 10 && P(stopUp.length, stops.length) >= 35) { why.push(['Devuelve lo que gana', `${P(stopUp.length, stops.length)}% de los stops llegaron antes a ir +10% o más: sube, no vende y acaba en el stop`]);
+    need.push(['Gestión de salida', 'stop dinámico y venta parcial al subir; el ciclo ya crea variantes con stop dinámico, faltan operaciones para validarlas']); }
+  // 4. Objetivos lejanos
+  const tm = (all.tiempo || 0); if (P(tm, allN) >= 25) why.push(['Objetivos demasiado lejos', `${P(tm, allN)}% se cierran por tiempo sin llegar al objetivo`]);
+  // 5. Entra tarde en máximos
+  if (g.late8 && P(g.late8.rs.stop || 0, g.late8.n) >= 55) why.push(['Compra en el máximo', `la entrada "superviviente a los 8 min" toca el stop en ${P(g.late8.rs.stop || 0, g.late8.n)}% de los casos: entra cuando ya subió y le toca la bajada`]);
+  // Qué funciona
+  const fams = Object.entries(g).map(([k, o]) => ({ k, n: o.n, wr: P(o.w, o.n), avg: o.sum / o.n })).sort((a, b) => b.avg - a.avg);
+  for (const f of fams.slice(0, 2)) good.push([FN[f.k] || f.k, `${f.avg >= 0 ? '+' : ''}${f.avg.toFixed(1)}% de media por operación · ${f.wr}% de acierto · ${f.n} ops${f.n < 100 ? ' (aún pocas)' : ''}`]);
+  const worst = fams.at(-1); if (worst && worst.avg < -15) why.push([`Lo peor: ${FN[worst.k] || worst.k}`, `${worst.avg.toFixed(1)}% de media en ${worst.n} operaciones; el descarte automático ya va apartando sus estrategias`]);
+  const lead = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
+  if (lead) good.push(['Mejor estrategia ahora', `${STRAT.get(lead.id).name} · ${lead.mean >= 0 ? '+' : ''}${lead.mean.toFixed(1)}% por operación (${lead.n} ops)`]);
+  // Qué información le falta
+  const tg = window.__tg, tgOn = tg?.status?.() === 'on', tgCalls = tg ? tg.st.calls.filter(c => c.status === 'ok').length : 0;
+  if (!tgOn) need.push(['Telegram conectado en esta pestaña', 'sin él no hay llamadas de comunidades ni ranking; conéctalo en el panel TELEGRAM']);
+  else if (tgCalls < 20) need.push(['Más comunidades de llamadas', `solo ${tgCalls} llamadas puntuadas; únete a más canales (mira COMUNIDADES SUGERIDAS)`]);
+  if (TOP.size < 5) need.push(['Tiempo para los traders top', `solo ${TOP.size} carteras con historial fiable; hacen falta horas de datos para que la estrategia de confluencia tenga señal`]);
+  if (!data.ai.runs.length) need.push(['Analista IA', 'falta la clave ANTHROPIC_API_KEY en Netlify; sin ella el bot solo usa este diagnóstico automático']);
+  if (xState.paused || !X_URL) need.push(['Datos de X (opcional)', 'sin saldo en X; poco útil para monedas de 2 minutos, más para monedas con volumen']);
+  if (samples.length < 120) need.push(['Más monedas terminadas para los patrones', `${samples.length} de 120 necesarias para empezar a comparar rasgos`]);
+  if (!data.champ) need.push(['Una campeona verificada', 'ninguna estrategia ha demostrado ganar con 30+ operaciones; hasta entonces la cartera usa la mejor provisional']);
+  return { why, need, good };
+}
+function renderDiag() {
+  if (Date.now() - dgAt < 15000 && dgCache) return; dgAt = Date.now();
+  const d = diagnose(), li = a => a.map(([b, t]) => `<li><b>${esc(b)}</b><br><span>${esc(t)}</span></li>`).join('');
+  const html = `<div><h3 style="color:var(--r)">POR QUÉ FALLA</h3><ol>${li(d.why)}</ol></div><div><h3 style="color:var(--a)">QUÉ LE FALTA</h3><ol>${li(d.need) || '<li><span>Nada pendiente por tu parte.</span></li>'}</ol></div><div><h3 style="color:var(--g)">LO QUE SÍ FUNCIONA</h3><ol>${li(d.good) || '<li><span>Todavía nada destaca.</span></li>'}</ol></div>`;
+  if (html !== dgCache) { dgCache = html; $('dgBody').innerHTML = html; }
+}
 function renderSwing() {
   const usd = v => !v ? '–' : v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? '$' + Math.round(v / 1e3) + 'k' : '$' + Math.round(v);
   const pcs = v => (v > 0 ? '+' : '') + Number(v || 0).toFixed(1) + '%';
