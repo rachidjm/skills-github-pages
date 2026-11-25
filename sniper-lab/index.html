@@ -1192,7 +1192,7 @@ function renderAI() {
   const r = data.ai.runs[0];
   $('aiState').textContent = aiState.busy ? 'analizando…' : r ? 'último análisis ' + madrid(r.ts, { hour: '2-digit', minute: '2-digit' }) : 'sin análisis aún';
   $('aiErr').textContent = aiState.err ? 'Error: ' + aiState.err : '';
-  if (!r) return;
+  if (!r) { if (aiState.err && !/Falta la variable/.test(aiState.err)) $('aiBody').innerHTML = '<div class="sub">La clave está conectada. Pulsa «Analizar ahora» para el primer análisis.</div>'; return; }
   const st = x => { const k = scoreOf(x); return !x ? '' : data.discarded[x] ? 'descartada' : k ? `${k.n} ops · ${eur(k.mean / 100)}/op` : 'sin operaciones aún'; };
   $('aiBody').innerHTML = `<div style="font-size:13px;line-height:1.5;margin-bottom:8px">${esc(r.resumen)}</div>` + r.items.map(it => {
     const g = it.estado === 'creada' ? data.gen.find(x => x.parent === it.estrategia && x.ts >= r.ts && x.ai) : null;

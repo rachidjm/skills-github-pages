@@ -19,7 +19,7 @@ Arreglos permitidos (campo "arreglo"), siempre sobre una estrategia existente (c
 - {"tipo":"remove_filter","valor":id de filtro que tenga la estrategia}
 Responde SOLO con JSON válido, sin texto alrededor, con esta forma:
 {"resumen":"2-3 frases con la causa principal de las pérdidas","diagnostico":[{"problema":"…","evidencia":"cifras del resumen","estrategia":"id","arreglo":{"tipo":"…","valor":…}}]}
-Máximo 5 elementos en "diagnostico", ordenados por impacto.`;
+Máximo 5 elementos en "diagnostico", ordenados por impacto. Cada texto de como mucho 200 caracteres. Sin bloques de código ni comentarios.`;
 
 export default async (req) => {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -36,13 +36,26 @@ export default async (req) => {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: process.env.AI_MODEL || 'claude-haiku-5-5', max_tokens: 1500, system: SYSTEM,
+    body: JSON.stringify({ model: process.env.AI_MODEL || 'claude-haiku-5-5', max_tokens: 4000, system: SYSTEM,
       messages: [{ role: 'user', content: 'Resumen del laboratorio (JSON):\n' + JSON.stringify(summary) }] }),
   }).catch(e => ({ ok: false, status: 0, text: async () => String(e) }));
   if (!r.ok) return json({ error: `API de IA ${r.status}: ${(await r.text()).slice(0, 200)}`, used, cap }, 502);
   const d = await r.json();
   const text = (d.content || []).map(c => c.text || '').join('');
-  const m = text.match(/\{[\s\S]*\}/);
-  let out; try { out = JSON.parse(m ? m[0] : text); } catch { return json({ error: 'la IA no devolvió JSON válido', raw: text.slice(0, 300), used, cap }, 502); }
+  const out = parseLoose(text);
+  if (!out) return json({ error: 'la IA no devolvió JSON válido', raw: text.slice(0, 300), used, cap }, 502);
   return json({ ...out, used, cap, model: d.model });
 };
+
+// Lee el JSON aunque venga con ```json, texto alrededor o cortado a mitad (se queda con los diagnósticos completos)
+function parseLoose(text) {
+  const t = String(text || '').replace(/```(?:json)?/gi, '');
+  const a = t.indexOf('{'); if (a < 0) return null;
+  const body = t.slice(a), b = body.lastIndexOf('}');
+  try { return JSON.parse(body.slice(0, b + 1)); } catch {}
+  // Cortado: cierra el último elemento completo de "diagnostico"
+  for (let i = body.lastIndexOf('}'); i > 0; i = body.lastIndexOf('}', i - 1)) {
+    for (const tail of [']}', '}]}', ']}}']) { try { const o = JSON.parse(body.slice(0, i + 1) + tail); if (o && (o.resumen || o.diagnostico)) return o; } catch {} }
+  }
+  const r = body.match(/"resumen"\s*:\s*"([^"]*)"/); return r ? { resumen: r[1], diagnostico: [] } : null;
+}
