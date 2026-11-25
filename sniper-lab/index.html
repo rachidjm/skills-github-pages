@@ -46,7 +46,9 @@ button:disabled{opacity:.35;cursor:default}
 .r2{grid-template-columns:minmax(0,3fr) minmax(0,5fr) minmax(0,4fr)}
 .r3{grid-template-columns:minmax(0,5fr) minmax(0,4fr) minmax(0,4fr)}
 .r4{grid-template-columns:minmax(0,4fr) minmax(0,8fr)}
-.tgf input{min-width:150px}
+[hidden]{display:none!important}
+.tgf{flex-wrap:nowrap;align-items:flex-end}.tgf label{flex:1 1 0;min-width:0}.tgf input{width:100%;min-width:0}.tgf button{flex:none;min-height:42px;padding:0 22px}
+@media(max-width:700px){.tgf{flex-wrap:wrap}.tgf label{flex-basis:100%}}
 .pn{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;position:relative}
 .pn h2{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.06em;color:var(--soft);margin:0 0 10px;display:flex;justify-content:space-between;gap:8px}
 .pn h2 em{font-style:normal;color:var(--dim)}
@@ -859,7 +861,7 @@ cv.addEventListener('pointermove', e => {
   const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   if (cam.drag) {
     const dx = e.clientX - cam.lx, dy = e.clientY - cam.ly; cam.lx = e.clientX; cam.ly = e.clientY; cam.moved += Math.abs(dx) + Math.abs(dy);
-    cam.yaw += dx * 0.006; cam.pitch = Math.max(-1.35, Math.min(1.35, cam.pitch + dy * 0.006)); cam.vy = dx * 0.006; cam.vp = dy * 0.006; cam.idle = performance.now();
+    cam.yaw += dx * 0.006; cam.pitch = Math.max(-1.35, Math.min(1.35, cam.pitch - dy * 0.006)); cam.vy = dx * 0.006; cam.vp = -dy * 0.006; cam.idle = performance.now();
   }
   hover = null; let best = 14;
   for (const n of nodes) { const d = Math.hypot(n.x - mx, n.y - my); if (d < best) { best = d; hover = n.tk; } }
