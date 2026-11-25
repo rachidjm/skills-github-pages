@@ -493,6 +493,15 @@ for (const tp of [2, 3]) for (const sl of [30, 40]) {
     name: `Datos + 1 min de confirmación · sin mayhem y 3+ compras en el bloque inicial · objetivo ${tp}x · stop -${sl}% · stop dinámico 15%` };
   STRATS.push(st); STRAT.set(st.id, st);
 }
+// Nuevo (ciclo 2026-11-25, 2º export): con más datos, "confirm_bundle" es la familia más fiable del torneo
+// (83% acierto, +35,2%/op, n=24) y rinde mejor cuanto más bajo el objetivo (tp1,5: 100% acierto, +35-39%/op;
+// tp2/tp3 bajan a 75% con más salidas por tiempo/stop). "confirm_nomayhem" (53,6% acierto, +10,8%/op, n=84)
+// muestra el mismo patrón. Se prueba un objetivo aún más rápido (+30%) para ver si sube la consistencia.
+for (const sl of [25, 40]) for (const fl of ['bundle', 'nomayhem']) {
+  const st = { id: `confirm_tp1.3_sl${sl}_${fl}`, entry: 'confirm', ent: CONFIRM_E, tp: 1.3, sl, filter: FMAP.get(fl),
+    name: `Datos + 1 min de confirmación · ${FMAP.get(fl).txt} · objetivo 1,3x · stop -${sl}%` };
+  STRATS.push(st); STRAT.set(st.id, st);
+}
 // Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
 const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
 // ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
@@ -959,7 +968,10 @@ function pickChampion() {
     if (ub < 0) { data.discarded[s.id] = Date.now(); log('a', `DESCARTADA ${esc(s.name)} · ${n} ops, media ${pc(m)}: deja de probarse`); } }
   const c = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= CFG.minN).sort((a, b) => b.lb - a.lb);
   if (!c.length) return;
-  const best = c[0], cur = data.champ ? scoreOf(data.champ.id) : null;
+  // Arreglo (2026-11-25): si la campeona actual ha sido descartada (ya demostró perder), no debe hacer falta
+  // superarla por +2 de margen para reemplazarla — eso la dejaba de campeona indefinidamente pese a estar descartada,
+  // y la cartera "Automática" seguía usándola (visto en vivo: info_tp2_sl25_bundle, descartada, media -10,6%).
+  const best = c[0], champDiscarded = data.champ && data.discarded[data.champ.id], cur = data.champ && !champDiscarded ? scoreOf(data.champ.id) : null;
   if (!cur || best.id !== data.champ.id && best.lb > cur.lb + 2) {
     data.hist.unshift({ ts: Date.now(), id: best.id, lb: +best.lb.toFixed(1), n: best.n, prev: data.champ?.id || null, prevLb: cur ? +cur.lb.toFixed(1) : null });
     data.hist.length = Math.min(data.hist.length, 50);
@@ -991,10 +1003,11 @@ function innovate() {
     if (tot < 10) continue;
     const fs = (rs.stop || 0) / tot, fo = (rs.objetivo || 0) / tot, ft = ((rs.tiempo || 0) + (rs['sin actividad'] || 0)) / tot;
     const base = specOf(s), ideas = [];
-    // Nuevo (ciclo 2026-11-25): "nomayhem" y "bundle" (y su combinación) son las señales con más acierto medido
-    // hasta ahora (ver nomayhem_bundle); antes la innovación no las consideraba nunca como filtro extra.
+    // Nuevo (ciclo 2026-11-25, 2º export): con más datos, "bundle" solo (confirm_bundle: 83% acierto, +35,2%/op,
+    // n=24) rinde más que "nomayhem" solo (confirm_nomayhem: 53,6%, +10,8%, n=84), y la combinación "nomayhem_bundle"
+    // resultó demasiado rara (0 operaciones en confirm tras ~1 h de bot): se baja de prioridad frente a "bundle".
     if (s.ent?.call) continue;
-    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['nomayhem_bundle', 'nomayhem', 'bundle', 'clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'nomayhem_bundle')));
+    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['bundle', 'nomayhem', 'nomayhem_bundle', 'clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'bundle')));
     const tr = (data.trs || []).filter(x => x.id === b.id), wentUp = tr.filter(x => x.reason === 'stop' && x.mfe >= 1.1).length;
     if (fs >= 0.5) {
       if (base.sl < 60) ideas.push([{ ...base, sl: Math.min(60, base.sl + 15) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → stop más holgado`]);

@@ -2,6 +2,27 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-25 — segundo ciclo (datos: `sniper-lab-datos-2026-11-25-12-21.json`, 400 ops recientes, 830 estrategias; ~40 min después del primer ciclo, tras varios commits propios de Rachid: `feePct` 1,75→1,25, entrada "call" por aviso de comunidad/X, filtros `sustained`/`moving_or_mentioned`/`mm_clean`, radar de graduaciones a PumpSwap, arreglo de NaN, interfaz a prueba de fallos)
+
+**¿Funcionó el primer ciclo?** Parcialmente, y con un matiz importante:
+- `confirm_bundle` (el filtro que combinaba mejor) se sostiene y MEJORA: antes 80% acierto/+22,7%·op (n=20), ahora 83,3%/+35,2%·op (n=24) — y por tp: a objetivo 1,5x es perfecto (8/8, +35,6% y +38,7% de media); a 2x/3x baja a 75% con más salidas por tiempo/stop. `confirm_nomayhem` también aguanta: 53,6%/+10,8%·op (n=84, antes 59%/+10,8% con menos datos).
+- El filtro nuevo `nomayhem_bundle` (combinar ambas señales) **no se puede evaluar todavía**: exige a la vez "sin mayhem" + "3+ compras en bloque inicial" + que `confirm` ya vea el precio subiendo un 10% tras 1 min — combinación tan rara que ninguna variante `confirm_*_nomayhem_bundle` ni `trail15_confirm_*` ha abierto ni una sola operación en ~1 h de bot. Las únicas 45 operaciones registradas son todas de la entrada `info` (0% acierto, -52,7% de media), que ya era la peor familia antes de añadir el filtro — no demuestra que la combinación sea mala, solo que es demasiado rara para que la pruebe `info` con sentido y demasiado rara para que `confirm` la vea siquiera.
+- `innovate()` sí amplió su exploración como se pedía: aparecen ideas nuevas con "bundle" y "mayhem" en los últimos 40 `ideas` (antes nunca aparecían).
+
+**Diagnóstico nuevo, con cifras:**
+1. **Bug de verdad, no solo ajuste de estrategia**: la campeona que usa la cartera "Automática" (`info_tp2_sl25_bundle`) aparece en el export como **descartada** (`discarded: true`, 33 ops, media -10,6%, mínimo fiable -18,0) y sigue siendo la campeona activa. En `pickChampion()`, cuando la campeona actual se descarta, el código seguía exigiéndole a cualquier candidata superarla por +2 puntos de `lb` antes de reemplazarla — una campeona ya demostrada perdedora no debería tener ese blindaje. La cartera en vivo lleva operando con una estrategia que el propio sistema ya dio por mala.
+2. Sigue sin haber ningún `data.ai.runs` (0): la clave de Anthropic está conectada pero el analista todavía no ha hecho su primer análisis.
+3. Las entradas nuevas (`call`, `sustained`, `moving_or_mentioned`, `mm_clean`, `sw_grad`, `sw_call`) tienen 0 operaciones: aún sin datos para evaluarlas, normal a tan poco de haberse desplegado.
+
+**Cambios aplicados (3):**
+1. **Arreglo de `pickChampion()`**: si la campeona actual está descartada, se la trata como si no hubiera campeona (se reemplaza por la mejor candidata viva de inmediato, sin exigirle superarla por margen). Ningún id de estrategia cambia; es una corrección del código que elige campeona.
+2. **4 estrategias nuevas de objetivo más rápido**: `confirm_tp1.3_sl{25,40}_bundle` y `confirm_tp1.3_sl{25,40}_nomayhem`. Justificación: en ambos filtros el acierto baja y las salidas por tiempo/stop suben cuanto más alto el objetivo (1,5x perfecto → 2x/3x peor); se prueba un objetivo aún más bajo (+30%) para ver si sube más la consistencia y la rotación de capital.
+3. **Reordenado `innovate()`**: ahora prioriza `bundle` solo (83,3% acierto, +35,2%·op, n=24) por delante de `nomayhem_bundle` (sin datos suficientes) y de `nomayhem` solo (53,6%, +10,8%·op) al elegir qué filtro añadir a una estrategia que pierde por stops.
+
+**Qué esperar en el próximo export:** que la cartera "Automática" cambie de campeona (o confirme una con `lb` positivo) en vez de seguir con una descartada; que `confirm_tp1.3_sl25_bundle`/`confirm_tp1.3_sl40_bundle` acumulen operaciones con acierto ≥80% y media cercana o superior a las de tp1,5x; y que, si pasa suficiente tiempo de bot, por fin aparezca alguna operación en `confirm_*_nomayhem_bundle` o `trail15_confirm_*` para poder juzgarlas (si siguen en 0 operaciones tras mucho más tiempo, hay que asumir que la combinación es demasiado rara para merecer la pena y plantear retirarla en un ciclo futuro).
+
+**Para el próximo ciclo:** revisar si ya hay `data.ai.runs` con contenido, y comparar sus estrategias `ai:true` contra las de este ciclo.
+
 ## 2026-11-25 — primer ciclo (datos: `sniper-lab-datos-2026-11-25-11-42.json`, 400 operaciones, 580 estrategias)
 
 **Diagnóstico.** Con 400 operaciones recientes repartidas en 580 estrategias:
