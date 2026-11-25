@@ -1075,6 +1075,7 @@ function aiSummary() {
     return { id: x.id, nombre: s.name, ops: x.n, acierto_pct: Math.round(x.wr), media_pct: +x.mean.toFixed(1), minimo_fiable_pct: +x.lb.toFixed(1), motivos_salida: st.rs || {}, stops_tras_ir_ganando_10pct: `${stops.filter(t => t.mfe >= 1.1).length}/${stops.length}`, maximo_medio_alcanzado: avgOf(tr.map(t => t.mfe)), minutos_medios: avgOf(tr.map(t => t.hold)), filtros: specOf(s).filters }; };
   const ids = new Set(top.map(x => x.id));
   return {
+    diagnostico_automatico: (() => { try { const d = diagnose(); return { por_que_falla: d.why, que_le_falta: d.need, que_funciona: d.good }; } catch { return null; } })(),
     operaciones_totales: totalOps(), estrategias_activas: act.length, descartadas: Object.keys(data.discarded).length, motivos_globales: data.reasons,
     estrategias_top: top.map(strat),
     perdedoras_recientes: trs.filter(t => t.net <= 0 && ids.has(t.id)).slice(-40).map(t => ({ e: t.id, motivo: t.reason, neto_pct: t.net, max: t.mfe, min: t.mae, min_abierta: t.hold, datos: t.f })),
