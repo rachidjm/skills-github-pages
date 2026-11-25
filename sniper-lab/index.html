@@ -439,6 +439,9 @@ const FILTERS = [
   { id: 'smart2', txt: '2+ traders top entre los primeros compradores', f: x => (x.smart || 0) >= 2 },
   { id: 'smart_clean', txt: 'trader top y sin vetos', f: x => (x.smart || 0) >= 1 && !x.vetoes.length },
   { id: 'confluence', txt: 'confluencia: trader top + sin vetos + Telegram o X', f: x => (x.smart || 0) >= 1 && !x.vetoes.length && ((x.tgCalls || 0) >= 1 || !!x.xTrend || (x.xBig || 0) >= 1) },
+  // Nuevo (ciclo 2026-11-25): combina las dos señales con más acierto en los datos reales dentro de "confirm"
+  // (sin mayhem: 44 ops, 59% acierto, +10,8%/op · 3+ compras en el bloque inicial: 20 ops, 80% acierto, +22,7%/op)
+  { id: 'nomayhem_bundle', txt: 'sin mayhem y 3+ compras en el bloque inicial', f: x => !x.mayhem && x.bundleBuys >= 3 },
 ];
 const STRATS = [];
 // Entrada al instante: solo se puede filtrar con lo que se sabe al lanzar (nada de mirar el futuro)
@@ -462,6 +465,16 @@ for (const g of SW_SIGS) for (const tp of [1.06, 1.12, 1.25]) for (const sl of [
   STRATS.push({ id: `sw_${g.id}_tp${tp}_sl${sl}_${fl.id}`, entry: 'swing', ent: {}, swing: true, sig: g.id, tp, sl, hold: 60, filter: fl, name: `Con volumen · ${g.txt} · ${fl.txt} · objetivo +${Math.round((tp - 1) * 100)}% · stop -${sl}%` });
 const STRAT = new Map(STRATS.map(s => [s.id, s]));
 const FMAP = new Map(FILTERS.map(f => [f.id, f]));
+// Nuevo (ciclo 2026-11-25): la salida por tiempo (15 min) deja dinero en la mesa — las operaciones que acaban
+// cerradas por "tiempo" llegan en media a +37,5% (mfe 1,375) antes de que las corten. Con stop dinámico (15%
+// desde el máximo, se activa tras +10%) se deja correr la ganancia en vez de cortarla a los 15 min en seco,
+// sobre el filtro "nomayhem_bundle" (el más fiable de confirm: 80% acierto, +22,7%/op).
+const CONFIRM_E = ENTRIES.find(e => e.id === 'confirm');
+for (const tp of [2, 3]) for (const sl of [30, 40]) {
+  const st = { id: `trail15_confirm_tp${tp}_sl${sl}_nomayhem_bundle`, entry: 'confirm', ent: CONFIRM_E, tp, sl, trail: 15, filter: FMAP.get('nomayhem_bundle'),
+    name: `Datos + 1 min de confirmación · sin mayhem y 3+ compras en el bloque inicial · objetivo ${tp}x · stop -${sl}% · stop dinámico 15%` };
+  STRATS.push(st); STRAT.set(st.id, st);
+}
 // Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
 const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
 // ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
@@ -944,7 +957,9 @@ function innovate() {
     if (tot < 10) continue;
     const fs = (rs.stop || 0) / tot, fo = (rs.objetivo || 0) / tot, ft = ((rs.tiempo || 0) + (rs['sin actividad'] || 0)) / tot;
     const base = specOf(s), ideas = [];
-    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'clean')));
+    // Nuevo (ciclo 2026-11-25): "nomayhem" y "bundle" (y su combinación) son las señales con más acierto medido
+    // hasta ahora (ver nomayhem_bundle); antes la innovación no las consideraba nunca como filtro extra.
+    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['nomayhem_bundle', 'nomayhem', 'bundle', 'clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'nomayhem_bundle')));
     const tr = (data.trs || []).filter(x => x.id === b.id), wentUp = tr.filter(x => x.reason === 'stop' && x.mfe >= 1.1).length;
     if (fs >= 0.5) {
       if (base.sl < 60) ideas.push([{ ...base, sl: Math.min(60, base.sl + 15) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → stop más holgado`]);
