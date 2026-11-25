@@ -37,4 +37,4 @@ ehthumbs.db
 Thumbs.db
 datos/*
 !datos/CAMBIOS.md
-graphify-out/cache/
+graphify-out/
