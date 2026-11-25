@@ -502,6 +502,18 @@ for (const sl of [25, 40]) for (const fl of ['bundle', 'nomayhem']) {
     name: `Datos + 1 min de confirmación · ${FMAP.get(fl).txt} · objetivo 1,3x · stop -${sl}%` };
   STRATS.push(st); STRAT.set(st.id, st);
 }
+// Nuevo (ciclo 2026-11-25, 3er export): con 820 estrategias ya con datos, "reclaim" es con diferencia
+// la mejor señal con volumen (media ponderada -2,96%/op sobre 1738 operaciones, frente a -4,87% dip20,
+// -6,31% breakout, -7,71% call, -7,75% dip35, -10,06% grad) y dentro de ella, a cada objetivo probado
+// (+6%, +12%, +25%), el stop -12% rinde mejor que el -6% (p.ej. objetivo +12%: -1,76%/op con stop -12%
+// frente a -2,80%/op con stop -6%, n=68 y n=30). Se prueba si dar aún más margen (-18%, -24%) sigue
+// mejorando al evitar que el ruido dispare el stop antes de que la moneda recupere el suelo.
+for (const sl of [18, 24]) for (const fl of ['all', 'liq100']) {
+  const swf = SW_FILTERS.find(f => f.id === fl);
+  const st = { id: `sw_reclaim_tp1.12_sl${sl}_${fl}`, entry: 'swing', ent: {}, swing: true, sig: 'reclaim', tp: 1.12, sl, hold: 60, filter: swf,
+    name: `Con volumen · rompe el suelo de 1 h y lo recupera · ${swf.txt} · objetivo +12% · stop -${sl}%` };
+  STRATS.push(st); STRAT.set(st.id, st);
+}
 // Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
 const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
 // ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
@@ -1003,11 +1015,14 @@ function innovate() {
     if (tot < 10) continue;
     const fs = (rs.stop || 0) / tot, fo = (rs.objetivo || 0) / tot, ft = ((rs.tiempo || 0) + (rs['sin actividad'] || 0)) / tot;
     const base = specOf(s), ideas = [];
-    // Nuevo (ciclo 2026-11-25, 2º export): con más datos, "bundle" solo (confirm_bundle: 83% acierto, +35,2%/op,
-    // n=24) rinde más que "nomayhem" solo (confirm_nomayhem: 53,6%, +10,8%, n=84), y la combinación "nomayhem_bundle"
-    // resultó demasiado rara (0 operaciones en confirm tras ~1 h de bot): se baja de prioridad frente a "bundle".
+    // Nuevo (ciclo 2026-11-25, 3er export): con 400 operaciones más, TODA la familia de monedas nuevas (info/
+    // confirm/late8/late15) ha pasado a perder con cualquier filtro (-15% a -37%/op); "bundle" (-15,6%) y
+    // "nomayhem" (-17,4%) siguen siendo, con diferencia, los menos malos — "nomayhem_bundle" (-35,5%) es casi
+    // el peor de todos (antes parecía prometedor con muy pocas operaciones) y se quita de los candidatos.
+    // En monedas con volumen, "trend" resultó ser el peor filtro para la señal que más ops acumula, "reclaim"
+    // (-6,36%/op con trend frente a -1,76% con "all" y -2,57% con "liq100", mismo tp/stop): se prioriza liq100.
     if (s.ent?.call) continue;
-    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['bundle', 'nomayhem', 'nomayhem_bundle', 'clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'bundle')));
+    const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['liq100', 'trend'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['bundle', 'nomayhem', 'clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'liq100' : inst ? 'nocopy' : 'bundle')));
     const tr = (data.trs || []).filter(x => x.id === b.id), wentUp = tr.filter(x => x.reason === 'stop' && x.mfe >= 1.1).length;
     if (fs >= 0.5) {
       if (base.sl < 60) ideas.push([{ ...base, sl: Math.min(60, base.sl + 15) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → stop más holgado`]);
@@ -1249,7 +1264,10 @@ function pfValue(inv, raw, sw) { const cost = sw ? (SWC.fee + SWC.slip) / 100 : 
 for (const [k, p] of Object.entries(pf.positions)) { if (getTok(p.mint)?.pos?.has(p.id)) continue; const got = pfValue(p.inv, p.lastRaw || 1, STRAT.get(p.id)?.swing); pf.cash += got; pf.closed.unshift({ ts: Date.now(), symbol: p.symbol, mint: p.mint, id: p.id, inv: p.inv, got, reason: 'cerrada al recargar', held: (Date.now() - p.at) / 1000, eqAfter: pf.cash }); delete pf.positions[k]; }
 function pfTarget() {
   if (pf.strategy !== 'auto' && STRAT.has(pf.strategy)) return pf.strategy;
-  if (data.champ) return data.champ.id;
+  // Arreglo (2026-11-25, 3er export): si la campeona está descartada no debe usarse para operar ni para
+  // mostrarse como "campeona" — visto en vivo con sw_reclaim_tp1.12_sl12_all, descartada, media -1,76% (n=68),
+  // siguiendo de campeona porque ningún candidato vivo llega todavía a las 30 ops que exige pickChampion().
+  if (data.champ && !data.discarded[data.champ.id]) return data.champ.id;
   const c = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
   return c ? c.id : FALLBACK;
 }
@@ -1261,7 +1279,8 @@ function pfTargets() {
   if (pf.strategy !== 'auto') return new Set([pfTarget()]);
   if (Date.now() - pfSetCache.ts < 30000) return pfSetCache.ids;
   const top = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb).slice(0, 10).map(x => x.id);
-  const ids = new Set([...(data.champ ? [data.champ.id] : []), ...top].slice(0, 10)); if (!ids.size) ids.add(FALLBACK);
+  const champOk = data.champ && !data.discarded[data.champ.id];
+  const ids = new Set([...(champOk ? [data.champ.id] : []), ...top].slice(0, 10)); if (!ids.size) ids.add(FALLBACK);
   pfSetCache = { ts: Date.now(), ids }; return ids;
 }
 function pfOnOpen(t, id) {
