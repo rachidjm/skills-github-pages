@@ -294,7 +294,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
     <section class="pn">
       <h2>REGISTRO DE AGENTES <em>tail -f</em></h2>
       <div class="log" id="log"></div>
-      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span id="xChip">X · sin conectar</span><span id="tgChip">Telegram · sin conectar</span><span id="swChip">Monedas con volumen · –</span><span>IA · falta clave</span></div>
+      <div class="src"><span class="on">Solana RPC · activo</span><span class="on">PumpPortal · activo</span><span id="xChip">X · sin conectar</span><span id="tgChip">Telegram · sin conectar</span><span id="swChip">Monedas con volumen · –</span><span id="aiChip">IA · falta clave</span></div>
       <div class="sub" id="xTrends" style="margin-top:8px"></div>
     </section>
   </div>
@@ -319,6 +319,14 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
       <div class="scroll"><table><thead><tr><th>#</th><th>Comunidad</th><th>Llamadas</th><th>Acierto</th><th>Media/op</th><th>Llega a 2x</th><th>Primera en llamar</th><th>Mcap al llamar</th><th>Mín. fiable</th></tr></thead><tbody id="tgRank"><tr><td colspan="9" style="color:var(--soft)">Sin llamadas todavía.</td></tr></tbody></table></div>
       <h2 style="margin-top:14px">ÚLTIMAS LLAMADAS <em>dirección completa seleccionable</em></h2>
       <div class="scroll" id="tgCalls"><div class="sub">Sin llamadas todavía.</div></div>
+    </section>
+  </div>
+  <div class="row">
+    <section class="pn">
+      <h2>ANALISTA IA <em id="aiState">sin análisis aún</em></h2>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><button id="aiNow" style="min-height:30px;font-size:12px">Analizar ahora</button><span class="sub">La IA solo busca dónde y por qué fallan las operaciones y propone un arreglo; el ciclo del bot crea la estrategia nueva, el torneo la prueba y el descarte la aparta si no mejora. Analiza sola cada ~40 operaciones nuevas.</span></div>
+      <div class="sub" id="aiErr" style="color:var(--r)"></div>
+      <div id="aiBody"><div class="sub">Para activarla: crea una clave en console.anthropic.com y guárdala en Netlify como variable <b>ANTHROPIC_API_KEY</b> (igual que hiciste con X). Coste aproximado: céntimos al día con el modelo más barato.</div></div>
     </section>
   </div>
   <div class="row">
@@ -425,16 +433,25 @@ for (const g of SW_SIGS) for (const tp of [1.06, 1.12, 1.25]) for (const sl of [
 const STRAT = new Map(STRATS.map(s => [s.id, s]));
 const FMAP = new Map(FILTERS.map(f => [f.id, f]));
 // Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
-function specOf(s) { return s.spec || { entry: s.entry, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: CFG.holdMin, up: s.ent.up ?? null }; }
-function genId(g) { return `g_${g.entry}_tp${g.tp}_sl${g.sl}_h${g.hold}_u${g.up ?? 0}_${[...g.filters].sort().join('+')}`; }
+const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
+function specOf(s) { return s.spec || (s.swing ? { entry: 'swing', sig: s.sig, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: s.hold, up: null, trail: null } : { entry: s.entry, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: CFG.holdMin, up: s.ent.up ?? null, trail: null }); }
+function genId(g) { return `g_${g.entry}${g.sig ? '-' + g.sig : ''}_tp${g.tp}_sl${g.sl}_h${g.hold}_u${g.up ?? 0}_tr${g.trail || 0}_${[...g.filters].sort().join('+')}`; }
 function addGen(g) {
   if (STRAT.has(g.id)) return STRAT.get(g.id);
+  const trTxt = g.trail ? ` · stop dinámico ${g.trail}%` : '';
+  if (g.entry === 'swing') {
+    const SG = SW_SIGS.find(x => x.id === g.sig), fs = g.filters.map(id => SWF.get(id)).filter(Boolean); if (!SG || !fs.length) return null;
+    const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
+    const st = { id: g.id, entry: 'swing', ent: {}, swing: true, sig: g.sig, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true,
+      name: `✦ Con volumen · ${SG.txt} · ${filter.txt} · objetivo +${Math.round((g.tp - 1) * 100)}% · stop -${g.sl}%${g.hold !== 60 ? ` · salida ${g.hold} min` : ''}${trTxt}` };
+    STRATS.push(st); STRAT.set(st.id, st); return st;
+  }
   const E = ENTRIES.find(e => e.id === g.entry); if (!E) return null;
   const fs = g.filters.map(id => FMAP.get(id)).filter(Boolean); if (!fs.length) return null;
   const ent = { ...E, up: g.up ?? E.up };
   const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
-  const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, filter, spec: g, gen: true,
-    name: `✦ ${E.txt}${E.min && ent.up !== E.up ? ` (subida ≥${Math.round((ent.up - 1) * 100)}%)` : ''} · ${filter.txt} · objetivo ${String(g.tp).replace('.', ',')}x · stop -${g.sl}%${g.hold !== CFG.holdMin ? ` · salida ${g.hold} min` : ''}` };
+  const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true,
+    name: `✦ ${E.txt}${E.min && ent.up !== E.up ? ` (subida ≥${Math.round((ent.up - 1) * 100)}%)` : ''} · ${filter.txt} · objetivo ${String(g.tp).replace('.', ',')}x · stop -${g.sl}%${g.hold !== CFG.holdMin ? ` · salida ${g.hold} min` : ''}${trTxt}` };
   STRATS.push(st); STRAT.set(st.id, st); return st;
 }
 
@@ -680,20 +697,27 @@ function tryEntries(t, now) {
 function settle(t, now, forceAll = false) {
   for (const [id, p] of t.pos) {
     const s = STRAT.get(id), m = t.mcap / p.entry;
+    if (!s) { t.pos.delete(id); continue; }
+    p.hi = Math.max(p.hi || 1, m); p.lo = Math.min(p.lo || 1, m);    // lo mejor y lo peor que llegó a ir (para el analista)
     let reason = null;
     if (p.exiting) reason = p.exiting;
     else if (m >= s.tp) { p.exiting = 'objetivo'; p.trig = s.tp * p.entry; continue; }
     else if (m <= 1 - s.sl / 100) { p.exiting = 'stop'; continue; }
+    else if (s.trail && p.hi >= 1.1 && m <= p.hi * (1 - s.trail / 100)) reason = 'stop dinámico';
     else if (forceAll) reason = 'sin actividad';
     else if (now - p.at > (s.hold || CFG.holdMin) * 60e3) reason = 'tiempo';
     if (!reason) continue;
     const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig) : t.mcap) / p.entry;
     pfOnClose(t, id, raw, reason, now);
-    record(id, s.swing ? netSwing(raw) : netReturn(raw), t, reason, now);
+    record(id, s.swing ? netSwing(raw) : netReturn(raw), t, reason, now, p);
     t.pos.delete(id);
   }
 }
-function record(id, net, t, reason, now) {
+function record(id, net, t, reason, now, p) {
+  data.trs ??= [];
+  const f = t.f, ff = t.swing ? { liq: Math.round(t.liq || 0), ch1: t.ch1, ch6: t.ch6 } : f ? { sc: f.score, b: f.uniqueBuyers, v: (f.vetoes || []).length, sm: f.smart || 0, tg: f.tgCalls || 0, my: f.mayhem ? 1 : 0, ac: f.accel ? 1 : 0, dec: f.decSec } : {};
+  data.trs.push({ id, sym: t.symbol, reason, net: +net.toFixed(1), mfe: +(p?.hi || 1).toFixed(3), mae: +(p?.lo || 1).toFixed(3), hold: p ? +((now - p.at) / 60000).toFixed(1) : 0, ts: now, f: ff });
+  if (data.trs.length > 400) data.trs.splice(0, data.trs.length - 400);
   const st = data.stats[id]; st.n++; st.sum += net; if (net > 0) st.wins++; st.rs ??= {}; st.rs[reason] = (st.rs[reason] || 0) + 1;
   st.recent.push(+net.toFixed(2)); if (st.recent.length > CFG.recentN) st.recent.shift();
   data.reasons[reason] = (data.reasons[reason] || 0) + 1;
@@ -791,6 +815,13 @@ setInterval(pickChampion, 10000);
 // ===================== Innovación: el bot inventa estrategias nuevas =====================
 // Mira por qué fallan las mejores (stops, se quedan cortas, objetivo fácil…) y crea una variante que ataca ese problema.
 // Las variantes compiten igual que las demás: si pierden, el descarte automático las aparta.
+function registerGen(g, parent) {
+  const ns = addGen(g); if (!ns) return null;
+  data.gen.push(g); data.stats[g.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
+  data.ideas.unshift({ ts: g.ts, id: g.id, parent: parent.name, why: g.why, ai: !!g.ai }); data.ideas.length = Math.min(data.ideas.length, 40);
+  log('p', `${g.ai ? 'IA' : 'IDEA'} ${esc(g.why)} · nueva: ${esc(ns.name)}`); tape('a', g.ai ? 'IA' : 'IDEA', g.why);
+  return ns;
+}
 function innovate() {
   const active = STRATS.filter(s => !data.discarded[s.id]);
   if (active.filter(s => s.gen).length >= 80) return;
@@ -799,30 +830,28 @@ function innovate() {
   for (const b of best) {
     if (made >= 3) break;
     const s = STRAT.get(b.id), st = data.stats[b.id], rs = st.rs || {}, tot = Object.values(rs).reduce((a, c) => a + c, 0);
-    if (tot < 10 || s.swing) continue;
+    if (tot < 10) continue;
     const fs = (rs.stop || 0) / tot, fo = (rs.objetivo || 0) / tot, ft = ((rs.tiempo || 0) + (rs['sin actividad'] || 0)) / tot;
     const base = specOf(s), ideas = [];
-    const extra = ['clean', 'smart', 'accel', 'devok', 'score60'].find(f => !base.filters.includes(f) && !base.filters.includes('all') || (base.filters.includes('all') && f === 'clean'));
+    const M = s.swing ? SWF : FMAP, extra = (s.swing ? ['trend', 'liq100'] : ['clean', 'smart', 'accel', 'devok', 'score60']).find(f => !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : 'clean')));
+    const tr = (data.trs || []).filter(x => x.id === b.id), wentUp = tr.filter(x => x.reason === 'stop' && x.mfe >= 1.1).length;
     if (fs >= 0.5) {
       if (base.sl < 60) ideas.push([{ ...base, sl: Math.min(60, base.sl + 15) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → stop más holgado`]);
-      if (extra) ideas.push([{ ...base, filters: base.filters.filter(f => f !== 'all').concat(extra) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → filtro extra: ${FMAP.get(extra).txt}`]);
+      if (extra) ideas.push([{ ...base, filters: base.filters.filter(f => f !== 'all').concat(extra) }, `pierde sobre todo por stops (${Math.round(fs * 100)}%) → filtro extra: ${M.get(extra).txt}`]);
       if (base.entry === 'info') ideas.push([{ ...base, entry: 'confirm' }, `entra y se hunde enseguida (${Math.round(fs * 100)}% stops) → esperar 1 min de confirmación`]);
       if (ENTRIES.find(e => e.id === base.entry)?.min) ideas.push([{ ...base, up: +((base.up || 1.3) + 0.3).toFixed(1) }, `las supervivientes que elige se caen → exigir más subida previa`]);
     }
     if (ft >= 0.4) {
       if (base.tp > 1.3) ideas.push([{ ...base, tp: Math.max(1.3, +(base.tp * 0.7).toFixed(1)) }, `muchas se quedan sin llegar al objetivo (${Math.round(ft * 100)}%) → objetivo más cerca`]);
-      if (base.hold < 40) ideas.push([{ ...base, hold: Math.min(40, base.hold + 10) }, `muchas se cierran por tiempo (${Math.round(ft * 100)}%) → darles más tiempo`]);
+      if (base.hold < (s.swing ? 120 : 40)) ideas.push([{ ...base, hold: Math.min(s.swing ? 120 : 40, base.hold + (s.swing ? 30 : 10)) }, `muchas se cierran por tiempo (${Math.round(ft * 100)}%) → darles más tiempo`]);
     }
+    if (wentUp >= 3 && !base.trail) ideas.push([{ ...base, trail: 15 }, `${wentUp} operaciones tocaron el stop después de ir ganando un 10%+ → stop dinámico del 15%`]);
     if (fo >= 0.35 && base.tp < 6) ideas.push([{ ...base, tp: Math.min(6, +(base.tp * 1.5).toFixed(1)) }, `llega al objetivo a menudo (${Math.round(fo * 100)}%) → objetivo más ambicioso`]);
     for (const [g, why] of ideas) {
       if (made >= 3) break;
       g.id = genId(g); if (STRAT.has(g.id) || data.discarded[g.id]) continue;
       g.parent = b.id; g.why = why; g.ts = Date.now();
-      const ns = addGen(g); if (!ns) continue;
-      data.gen.push(g); data.stats[g.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
-      data.ideas.unshift({ ts: g.ts, id: g.id, parent: s.name, why }); data.ideas.length = Math.min(data.ideas.length, 30);
-      log('p', `IDEA ${esc(why)} · nueva: ${esc(ns.name)}`); tape('a', 'IDEA', why);
-      made++;
+      if (registerGen(g, s)) made++;
     }
   }
   if (made) { save(); fillStratSelect(); }
@@ -903,6 +932,78 @@ async function swPoll() {
 }
 setInterval(() => swPoll().catch(() => {}), 20000);
 setInterval(() => { if (running) swRefresh().catch(() => {}); }, 15 * 60e3);
+
+// ===================== Analista IA: ve DÓNDE y POR QUÉ fallan; el ciclo lo arregla =====================
+// La IA solo diagnostica (con un arreglo de una lista cerrada). El ciclo crea la variante, el torneo la prueba
+// y el descarte automático la aparta si no mejora. La clave vive en Netlify (ANTHROPIC_API_KEY), nunca aquí.
+const AI_URL = /netlify\.app$/.test(location.hostname) ? '/api/ai' : null;
+let aiState = { busy: false, err: '', paused: false, used: 0, cap: 0 };
+data.ai ??= { runs: [], lastOps: 0, lastTs: 0 };
+const totalOps = () => Object.values(data.stats).reduce((s, x) => s + x.n, 0);
+const avgOf = a => a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(2) : null;
+function aiSummary() {
+  const act = STRATS.filter(s => !data.discarded[s.id]);
+  const top = act.map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb).slice(0, 8);
+  const trs = data.trs || [];
+  const strat = x => { const s = STRAT.get(x.id), st = data.stats[x.id], tr = trs.filter(t => t.id === x.id), stops = tr.filter(t => t.reason === 'stop');
+    return { id: x.id, nombre: s.name, ops: x.n, acierto_pct: Math.round(x.wr), media_pct: +x.mean.toFixed(1), minimo_fiable_pct: +x.lb.toFixed(1), motivos_salida: st.rs || {}, stops_tras_ir_ganando_10pct: `${stops.filter(t => t.mfe >= 1.1).length}/${stops.length}`, maximo_medio_alcanzado: avgOf(tr.map(t => t.mfe)), minutos_medios: avgOf(tr.map(t => t.hold)), filtros: specOf(s).filters }; };
+  const ids = new Set(top.map(x => x.id));
+  return {
+    operaciones_totales: totalOps(), estrategias_activas: act.length, descartadas: Object.keys(data.discarded).length, motivos_globales: data.reasons,
+    estrategias_top: top.map(strat),
+    perdedoras_recientes: trs.filter(t => t.net <= 0 && ids.has(t.id)).slice(-40).map(t => ({ e: t.id, motivo: t.reason, neto_pct: t.net, max: t.mfe, min: t.mae, min_abierta: t.hold, datos: t.f })),
+    ganadoras_recientes: trs.filter(t => t.net > 0 && ids.has(t.id)).slice(-15).map(t => ({ e: t.id, motivo: t.reason, neto_pct: t.net, max: t.mfe, min_abierta: t.hold, datos: t.f })),
+    ideas_ya_probadas: data.ideas.slice(0, 12).map(i => ({ idea: i.why, resultado: data.discarded[i.id] ? 'descartada' : scoreOf(i.id) ? `${scoreOf(i.id).n} ops, ${scoreOf(i.id).mean.toFixed(1)}%` : 'sin ops' })),
+    filtros: { monedas_nuevas: FILTERS.map(f => [f.id, f.txt]), con_volumen: SW_FILTERS.map(f => [f.id, f.txt]) },
+    leyenda: 'max/min = mejor y peor múltiplo durante la operación (1.2 = +20%). datos monedas nuevas: sc riesgo 0-100 (100 limpio), b compradores, v vetos, sm traders top, tg llamadas Telegram, my mayhem, ac compras acelerando, dec segundos hasta decidir. Monedas con volumen (ids sw_…): liq liquidez $, ch1/ch6 cambio % 1 h/6 h. Comisiones: monedas nuevas ~5,5% ida y vuelta; con volumen ~1,6%.',
+  };
+}
+function aiApply(item) {
+  const s = STRAT.get(item.estrategia); if (!s) return 'estrategia desconocida';
+  const g = { ...specOf(s), filters: [...specOf(s).filters] }, a = item.arreglo || {}, v = a.valor, cl = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+  if (a.tipo === 'sl') g.sl = cl(Math.round(+v), 3, 70);
+  else if (a.tipo === 'tp') g.tp = +cl(+v, 1.03, 10).toFixed(2);
+  else if (a.tipo === 'hold') g.hold = cl(Math.round(+v), 5, 120);
+  else if (a.tipo === 'trail') g.trail = cl(Math.round(+v), 3, 50);
+  else if (a.tipo === 'entry') { if (s.swing || !ENTRIES.some(e => e.id === v)) return 'entrada no válida'; g.entry = v; }
+  else if (a.tipo === 'up') { if (s.swing) return 'no aplica'; g.up = +cl(+v, 1.1, 3).toFixed(1); }
+  else if (a.tipo === 'add_filter') { const M = s.swing ? SWF : FMAP; if (!M.has(v) || g.filters.includes(v)) return 'filtro no válido'; g.filters = g.filters.filter(f => f !== 'all').concat(v); }
+  else if (a.tipo === 'remove_filter') { if (!g.filters.includes(v) || g.filters.length < 2) return 'no se puede quitar'; g.filters = g.filters.filter(f => f !== v); }
+  else return 'arreglo no permitido';
+  if (Object.values(g).some(x => typeof x === 'number' && !Number.isFinite(x))) return 'valor no válido';
+  g.id = genId(g); if (STRAT.has(g.id)) return 'ya existía'; if (data.discarded[g.id]) return 'ya se probó y se descartó';
+  g.parent = s.id; g.why = 'IA: ' + String(item.problema || '').slice(0, 180); g.ts = Date.now(); g.ai = true;
+  return registerGen(g, s) ? 'creada' : 'no se pudo crear';
+}
+async function aiRun(force) {
+  if (!AI_URL || aiState.busy || (aiState.paused && !force)) return;
+  const ops = totalOps(), since = ops - (data.ai.lastOps || 0), ago = Date.now() - (data.ai.lastTs || 0);
+  if (!force && !(since >= 40 || (ago > 3 * 3600e3 && since >= 10))) return;
+  if (!STRATS.some(s => (scoreOf(s.id)?.n || 0) >= 10)) { if (force) { aiState.err = 'faltan datos: ninguna estrategia tiene aún 10 operaciones'; } return; }
+  aiState.busy = true; aiState.err = '';
+  try {
+    const r = await fetch(AI_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(aiSummary()) });
+    const d = await r.json().catch(() => ({}));
+    aiState.used = d.used ?? aiState.used; aiState.cap = d.cap ?? aiState.cap;
+    if (!r.ok) { aiState.err = d.error || ('HTTP ' + r.status); if (/Falta la variable|401|403|credit|balance/i.test(aiState.err)) aiState.paused = true; log('a', `IA · ${esc(aiState.err)}`); return; }
+    const run = { ts: Date.now(), resumen: String(d.resumen || '').slice(0, 600), items: [] };
+    for (const it of (d.diagnostico || []).slice(0, 5)) run.items.push({ problema: String(it.problema || '').slice(0, 200), evidencia: String(it.evidencia || '').slice(0, 240), estrategia: it.estrategia, arreglo: it.arreglo, estado: aiApply(it) });
+    data.ai.runs.unshift(run); data.ai.runs.length = Math.min(data.ai.runs.length, 20); data.ai.lastOps = ops; data.ai.lastTs = run.ts;
+    log('p', `IA · análisis: ${esc(run.resumen.slice(0, 140))}`); save(); fillStratSelect();
+  } catch (e) { aiState.err = e.message; } finally { aiState.busy = false; }
+}
+setInterval(() => { if (running) aiRun(false); }, 20 * 60e3); setTimeout(() => { if (running) aiRun(false); }, 120e3);
+function renderAI() {
+  const c = $('aiChip'); c.textContent = !AI_URL ? 'IA · requiere Netlify' : aiState.paused ? 'IA · ' + aiState.err : aiState.busy ? 'IA · analizando…' : data.ai.runs.length ? `IA · activa${aiState.cap ? ` · ${aiState.used}/${aiState.cap} hoy` : ''}` : 'IA · esperando datos'; c.className = AI_URL && !aiState.paused && data.ai.runs.length ? 'on' : '';
+  const r = data.ai.runs[0];
+  $('aiState').textContent = aiState.busy ? 'analizando…' : r ? 'último análisis ' + madrid(r.ts, { hour: '2-digit', minute: '2-digit' }) : 'sin análisis aún';
+  $('aiErr').textContent = aiState.err ? 'Error: ' + aiState.err : '';
+  if (!r) return;
+  const st = x => { const k = scoreOf(x); return !x ? '' : data.discarded[x] ? 'descartada' : k ? `${k.n} ops · ${eur(k.mean / 100)}/op` : 'sin operaciones aún'; };
+  $('aiBody').innerHTML = `<div style="font-size:13px;line-height:1.5;margin-bottom:8px">${esc(r.resumen)}</div>` + r.items.map(it => {
+    const g = it.estado === 'creada' ? data.gen.find(x => x.parent === it.estrategia && x.ts >= r.ts && x.ai) : null;
+    return `<div class="tt"><span class="s" style="color:${it.estado === 'creada' ? 'var(--g)' : 'var(--soft)'}">${it.estado === 'creada' ? 'ARREGLO' : 'NO APLICADO'}</span><span><b>${esc(it.problema)}</b></span><span class="n" style="color:var(--soft)">${esc((it.arreglo?.tipo || '') + ' ' + (it.arreglo?.valor ?? ''))}</span><span class="w">${esc(it.evidencia)}${it.estado !== 'creada' ? ` · ${esc(it.estado)}` : g ? ` · nueva estrategia: ${esc(st(g.id))}` : ''}</span></div>`; }).join('');
+}
 
 function setRunning(v) {
   running = v; if (v && !startedAt) startedAt = Date.now();
@@ -1261,6 +1362,7 @@ function render() {
   const tt = topTrends(10); $('xTrends').textContent = tt.length ? 'Tendencias en X ahora: ' + tt.map(([w]) => w).join(' · ') : '';
   renderWallets();
   renderSwing();
+  renderAI();
   { const c = $('swChip'); c.textContent = swing.size ? `Monedas con volumen · ${swing.size}` : 'Monedas con volumen · –'; c.className = swing.size ? 'on' : ''; }
   $('ideas').innerHTML = data.ideas.length ? '<div class="sub" style="color:var(--ink);font-weight:700;margin-bottom:4px">IDEAS DEL BOT · estrategias inventadas</div>' + data.ideas.slice(0, 4).map(i => { const x = scoreOf(i.id); return `<div class="sub" style="margin-top:3px">✦ ${esc(i.why)} <span style="color:var(--dim)">· ${data.discarded[i.id] ? 'descartada' : x ? `${x.n} ops, ${eur(x.mean / 100)}/op` : 'sin operaciones aún'}</span></div>`; }).join('') : '<div class="sub" style="color:var(--dim)">El bot inventará variantes de las mejores estrategias en cuanto tengan 15+ operaciones.</div>';
   renderBot();
@@ -1292,6 +1394,7 @@ function renderWallets() {
 }
 
 // ===================== Botones =====================
+$('aiNow').onclick = () => { aiState.paused = false; aiRun(true).then(render); render(); };
 $('hrReset').onclick = () => { const st = Object.values(data.stats); data.view = { ts: Date.now(), closed: st.reduce((s, x) => s + x.n, 0), wins: st.reduce((s, x) => s + x.wins, 0), sum: st.reduce((s, x) => s + x.sum, 0), reasons: { ...data.reasons } }; data.viewMode = 'reset'; save(); log('c', 'contadores de acierto reiniciados · lo aprendido se conserva (botón «histórico»)'); render(); };
 for (const b of $('hrSeg').children) b.onclick = () => { if (b.disabled) return; data.viewMode = b.dataset.v; save(); render(); };
 $('play').onclick = () => setRunning(true);
