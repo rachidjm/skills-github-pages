@@ -588,7 +588,7 @@ function sessSave() {
     const tk = [...tokens.values()].filter(t => ['tracking', 'window', 'evaluating', 'lite'].includes(t.phase)).map(tokOut);
     localStorage.setItem(SESS, JSON.stringify({ ts: Date.now(), running, seen, tk, logLines: logLines.slice(0, 80), tapeItems, stack: stack.slice(0, 30).map(({ tk, ...d }) => ({ ...d, mint: tk?.mint })),
       constel: constel.slice(0, 160).map(t => ({ mint: t.mint, symbol: t.symbol, state: t.state, ang: t.ang, f: t.f ? { score: t.f.score, uniqueBuyers: t.f.uniqueBuyers, vetoes: t.f.vetoes } : null, createdAt: t.createdAt })),
-      series: Object.fromEntries(Object.entries(series).map(([k, m]) => [k, [...m]])), sw: [...swing.values()].map(t => ({ ...tokOut(t), s: t.s.slice(-400) })) }));
+      series: Object.fromEntries(Object.entries(series).map(([k, m]) => [k, [...m]])), sw: [...swing.values()].map(t => ({ ...tokOut(t), s: t.s.slice(-200) })) }));
   } catch {}
 }
 let sess = null; try { sess = JSON.parse(localStorage.getItem(SESS)); } catch {}
@@ -1473,7 +1473,13 @@ function drawConst(ts) {
 requestAnimationFrame(drawConst);
 
 let lastTape = '';
+let renderErr = '';
 function render() {
+  try { renderMain(); renderErr = ''; }
+  catch (e) { const m = (e && e.message) || String(e); if (m !== renderErr) { renderErr = m; console.error('render', e); log('r', `ERROR al pintar la interfaz: ${esc(m)} (el bot sigue operando)`); try { const L = JSON.parse(localStorage.getItem('snlab_errlog') || '[]'); L.unshift({ ts: Date.now(), m, st: String(e?.stack || '').slice(0, 600) }); localStorage.setItem('snlab_errlog', JSON.stringify(L.slice(0, 10))); } catch {} } }
+  finally { try { $('log').innerHTML = logLines.join('\n') || '<span class="c">[--:--:--]</span> esperando PLAY'; } catch {} }
+}
+function renderMain() {
   const noConn = running && startedAt && Date.now() - startedAt > 15000 && (!wsOk || (!rpcCalls && Date.now() - startedAt > 60000));
   $('live').className = 'live' + (running && !noConn ? ' on' : ''); $('liveTxt').textContent = noConn ? 'SIN CONEXIÓN' : running ? 'EN VIVO' : 'PAUSA';
   $('warn').style.display = noConn ? 'block' : 'none';
@@ -1547,10 +1553,10 @@ function render() {
   if (!X_URL) { xc.textContent = 'X · sin conectar (requiere Netlify)'; xc.className = ''; }
   else { xc.textContent = xState.ok === false ? 'X · error: ' + xState.err : xState.ok ? `X · activo · ${xState.used}/${xState.cap} posts hoy` : 'X · conectando…'; xc.className = xState.ok ? 'on' : ''; }
   const tt = topTrends(10); $('xTrends').textContent = tt.length ? 'Tendencias en X ahora: ' + tt.map(([w]) => w).join(' · ') : '';
-  renderWallets();
-  renderSwing();
-  renderAI();
-  renderDiag();
+  try { renderWallets(); } catch (e) { console.error('renderWallets', e); try { const L = JSON.parse(localStorage.getItem('snlab_errlog') || '[]'); if (L[0]?.m !== 'renderWallets: ' + e.message) { L.unshift({ ts: Date.now(), m: 'renderWallets: ' + e.message, st: String(e.stack || '').slice(0, 600) }); localStorage.setItem('snlab_errlog', JSON.stringify(L.slice(0, 10))); } } catch {} }
+  try { renderSwing(); } catch (e) { console.error('renderSwing', e); try { const L = JSON.parse(localStorage.getItem('snlab_errlog') || '[]'); if (L[0]?.m !== 'renderSwing: ' + e.message) { L.unshift({ ts: Date.now(), m: 'renderSwing: ' + e.message, st: String(e.stack || '').slice(0, 600) }); localStorage.setItem('snlab_errlog', JSON.stringify(L.slice(0, 10))); } } catch {} }
+  try { renderAI(); } catch (e) { console.error('renderAI', e); try { const L = JSON.parse(localStorage.getItem('snlab_errlog') || '[]'); if (L[0]?.m !== 'renderAI: ' + e.message) { L.unshift({ ts: Date.now(), m: 'renderAI: ' + e.message, st: String(e.stack || '').slice(0, 600) }); localStorage.setItem('snlab_errlog', JSON.stringify(L.slice(0, 10))); } } catch {} }
+  try { renderDiag(); } catch (e) { console.error('renderDiag', e); try { const L = JSON.parse(localStorage.getItem('snlab_errlog') || '[]'); if (L[0]?.m !== 'renderDiag: ' + e.message) { L.unshift({ ts: Date.now(), m: 'renderDiag: ' + e.message, st: String(e.stack || '').slice(0, 600) }); localStorage.setItem('snlab_errlog', JSON.stringify(L.slice(0, 10))); } } catch {} }
   { const all = [...patterns.c.slice(0, 8), ...patterns.d.slice(0, 8)].sort((a, b) => b.lift - a.lift);
     $('ptTxt').textContent = `${samples.length} monedas analizadas · media al lanzar ${patterns.n0 >= 120 ? Math.round(patterns.base0 * 100) + '%' : '…'} · al decidir ${patterns.n1 >= 120 ? Math.round(patterns.base1 * 100) + '%' : '…'}`;
     if (all.length) $('ptRows').innerHTML = all.map(pt => { const g = data.gen.find(x => x.filters?.includes(pt.id)), k = g && scoreOf(g.id);
