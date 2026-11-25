@@ -1242,8 +1242,18 @@ function pfTarget() {
 }
 function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = getTok(p.mint); inv += p.inv; val += pfValue(p.inv, t ? t.mcap / p.entry : 1, STRAT.get(p.id)?.swing); } return { inv, val }; }
 const pfEquity = () => pf.cash + pfOpenValue().val;
+// Modo automático: la cartera opera con las 10 mejores estrategias a la vez (campeona primero), una posición por moneda
+let pfSetCache = { ts: 0, ids: new Set() };
+function pfTargets() {
+  if (pf.strategy !== 'auto') return new Set([pfTarget()]);
+  if (Date.now() - pfSetCache.ts < 30000) return pfSetCache.ids;
+  const top = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb).slice(0, 10).map(x => x.id);
+  const ids = new Set([...(data.champ ? [data.champ.id] : []), ...top].slice(0, 10)); if (!ids.size) ids.add(FALLBACK);
+  pfSetCache = { ts: Date.now(), ids }; return ids;
+}
 function pfOnOpen(t, id) {
-  if (id !== pfTarget()) return;
+  if (!pfTargets().has(id)) return;
+  if (Object.values(pf.positions).some(p => p.mint === t.mint)) return;   // una sola posición por moneda
   const key = t.mint + '|' + id; if (pf.positions[key]) return;
   let inv = pf.mode === 'pct' ? pfEquity() * pf.size / 100 : pf.size;
   inv = Math.min(inv, pf.cash);
@@ -1284,7 +1294,7 @@ function tween(el, to, fmt) { const from = el._v ?? to; el._v = to; if (from ===
 function toast(msg) { const el = $('toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 4500); }
 // Ajustes
 const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat');
-function fillStratSelect() { const v = inStrat.value; inStrat.innerHTML = '<option value="auto">Automática: la mejor del torneo</option>' + [...STRATS].filter(s => !data.discarded[s.id] || s.id === pf.strategy).sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join(''); if (v) inStrat.value = v; }
+function fillStratSelect() { const v = inStrat.value; inStrat.innerHTML = '<option value="auto">Automática: las 10 mejores del torneo</option>' + [...STRATS].filter(s => !data.discarded[s.id] || s.id === pf.strategy).sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join(''); if (v) inStrat.value = v; }
 fillStratSelect();
 const syncInputs = (all = false) => { if (all) inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
 syncInputs(true);
@@ -1338,7 +1348,7 @@ function renderBot() {
   const real = pf.closed.reduce((s, c) => s + c.got - c.inv, 0), openPl = val - inv, col = v => v > 0.004 ? 'var(--g)' : v < -0.004 ? 'var(--r)' : 'var(--ink)';
   tween($('pfBal'), eq, money); $('pfBal').style.color = col(pl);
   $('pfPl').textContent = `${pl >= 0 ? '▲' : '▼'} ${signed(pl)} (${pc(plPct, 2)}) desde ${money(pf.start)}`; $('pfPl').style.color = col(pl);
-  $('pfSince').textContent = `Empezó el ${madrid(pf.startedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · invierte ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación · ${pf.strategy === 'auto' ? 'estrategia automática → ' : ''}${STRAT.get(pfTarget())?.name || ''}`;
+  $('pfSince').textContent = `Empezó el ${madrid(pf.startedAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · invierte ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación · ${pf.strategy === 'auto' ? `automática: opera con las ${pfTargets().size} mejores estrategias (campeona: ${STRAT.get(pfTarget())?.name || '–'})` : STRAT.get(pfTarget())?.name || ''}`;
   $('cStart').textContent = money(pf.start);
   $('cPl').textContent = signed(pl); $('cPl').style.color = col(pl); $('cPlPct').textContent = pc(plPct, 2) + ' sobre el capital';
   $('cReal').textContent = signed(real); $('cReal').style.color = col(real);
