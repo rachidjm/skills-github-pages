@@ -364,13 +364,13 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
     </section>
   </div>
   </div>
-<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 10 € por operación con comisiones de Pump.fun (1,25%) + PumpPortal, slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button> <button id="dump" style="min-height:28px;font-size:11px;margin-left:6px">Descargar datos del bot (para Claude Code)</button></div>
+<div class="foot" style="padding:0 16px 16px">Solo papel: no hay wallet ni se compra nada. 10 € por operación con comisiones de Pump.fun (1,25%; PumpPortal solo como radar), slippage y fee de red. Datos reales gratis: PumpPortal (tokens nuevos) y nodo público de Solana (trades, precios). Funciona mientras la página esté abierta; lo aprendido se guarda en este navegador. <button id="copy" style="min-height:28px;font-size:11px;margin-left:6px">Copiar resumen CSV</button> <button id="dump" style="min-height:28px;font-size:11px;margin-left:6px">Descargar datos del bot (para Claude Code)</button></div>
 
 <script>
 {
 // ===================== Configuración =====================
 const CFG = { sizeEur: 10, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
-  feePct: 1.75, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
+  feePct: 1.25, slipPct: 1,   // 1,25% de la curva de Pump.fun; PumpPortal solo se usa como radar (en real se compraría directo) netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
   minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 20 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
 let solEur = 130;
@@ -410,7 +410,8 @@ function pump() {
 // ===================== Estrategias =====================
 const ENTRIES = [{ id: 'info', txt: 'Al tener datos suficientes' }, { id: 'confirm', txt: 'Datos + 1 min de confirmación' },
   { id: 'late8', txt: 'Superviviente a los 8 min', min: 8, up: 1.3 }, { id: 'late15', txt: 'Superviviente a los 15 min', min: 15, up: 1.5 },
-  { id: 'instant', txt: 'Al instante (1–2 s tras lanzar)', instant: true }];
+  { id: 'instant', txt: 'Al instante (1–2 s tras lanzar)', instant: true },
+  { id: 'call', txt: 'Al llamarla una comunidad o X', call: true }];
 const TPS = [1.5, 2, 3], SLS = [25, 40];
 const FILTERS = [
   { id: 'all', txt: 'todos', f: () => true },
@@ -434,6 +435,10 @@ const FILTERS = [
   // Nuevo: evitar monedas muertas (la causa nº 1 de pérdidas): exige actividad en los últimos 30 s
   { id: 'active', txt: 'con actividad: 3+ operaciones en los últimos 30 s', f: x => (x.recent30 || 0) >= 3 },
   { id: 'active_clean', txt: 'con actividad y sin vetos', f: x => (x.recent30 || 0) >= 3 && !x.vetoes.length },
+  // Nuevos (idea de Rachid): fuera las monedas quietas que nadie menciona; dentro las que se mueven o que alguna fuente ya ha llamado
+  { id: 'sustained', txt: 'volumen sostenido (operaciones en 3+ tramos de 20 s) y activa', f: x => !!x.sustained },
+  { id: 'moving_or_mentioned', txt: 'se mueve (volumen y precio) o la menciona Telegram, X o un trader top', f: x => !!x.moving || !!x.sustained || (x.tgCalls || 0) >= 1 || (x.xMentions || 0) >= 1 || (x.smart || 0) >= 1 },
+  { id: 'mm_clean', txt: 'se mueve o la mencionan, y sin vetos', f: x => (!!x.moving || !!x.sustained || (x.tgCalls || 0) >= 1 || (x.xMentions || 0) >= 1 || (x.smart || 0) >= 1) && !x.vetoes.length },
   // Nuevos: traders top (ranking propio calculado on-chain) y confluencia de fuentes
   { id: 'smart', txt: '1+ trader top entre los primeros compradores', f: x => (x.smart || 0) >= 1 },
   { id: 'smart2', txt: '2+ traders top entre los primeros compradores', f: x => (x.smart || 0) >= 2 },
@@ -455,11 +460,21 @@ const INST_FILTERS = [
   { id: 'noserial', txt: 'creador no en serie', f: (x, t) => (t.creatorLaunches || 1) <= 1 },
 ];
 const IFMAP = new Map(INST_FILTERS.map(f => [f.id, f]));
-for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of (e.instant ? INST_FILTERS : FILTERS)) {
+// Entrada al llamarla una comunidad: se compra al momento de la mención, antes de que llegue el volumen
+const CALL_FILTERS = [
+  { id: 'all', txt: 'cualquier llamada', f: (x, t) => true },
+  { id: 'first', txt: 'primera comunidad en llamarla', f: (x, t) => !!t.callInfo?.first },
+  { id: 'topcomm', txt: 'llamada por una comunidad del top fiable', f: (x, t) => !!t.callInfo?.top },
+  { id: 'young', txt: 'moneda de menos de 30 min', f: (x, t) => Date.now() - (t.createdAt || 0) < 30 * 60e3 },
+];
+const CFMAP = new Map(CALL_FILTERS.map(f => [f.id, f]));
+for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const fl of (e.instant ? INST_FILTERS : e.call ? CALL_FILTERS : FILTERS)) {
   STRATS.push({ id: `${e.id}_tp${tp}_sl${sl}_${fl.id}`, entry: e.id, ent: e, tp, sl, filter: fl, name: `${e.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -${sl}%` });
 }
+// Llamadas con salida rápida: stop dinámico del 15% para salir antes de un posible rug
+{ const CE = ENTRIES.find(e => e.call); for (const tp of TPS) for (const fl of CALL_FILTERS) STRATS.push({ id: `call_tp${tp}_sl25_${fl.id}_tr15`, entry: 'call', ent: CE, tp, sl: 25, trail: 15, hold: 10, filter: fl, name: `${CE.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -25% · stop dinámico 15% · salida 10 min` }); }
 // Monedas con volumen (ya crecidas): señales sobre su rango de la última hora
-const SW_SIGS = [{ id: 'reclaim', txt: 'rompe el suelo de 1 h y lo recupera' }, { id: 'dip20', txt: 'cae 20% desde el máximo de 1 h y rebota' }, { id: 'dip35', txt: 'cae 35% desde el máximo de 1 h y rebota' }, { id: 'breakout', txt: 'rompe el máximo de 1 h' }];
+const SW_SIGS = [{ id: 'grad', txt: 'recién graduada a PumpSwap (radar de Pump.fun)' }, { id: 'call', txt: 'la llama una comunidad o X' }, { id: 'reclaim', txt: 'rompe el suelo de 1 h y lo recupera' }, { id: 'dip20', txt: 'cae 20% desde el máximo de 1 h y rebota' }, { id: 'dip35', txt: 'cae 35% desde el máximo de 1 h y rebota' }, { id: 'breakout', txt: 'rompe el máximo de 1 h' }];
 const SW_FILTERS = [{ id: 'all', txt: 'todas', f: () => true }, { id: 'trend', txt: 'tendencia de 6 h al alza', f: x => (x.ch6 || 0) > 0 }, { id: 'liq100', txt: 'liquidez ≥100k $', f: x => (x.liq || 0) >= 1e5 }];
 for (const g of SW_SIGS) for (const tp of [1.06, 1.12, 1.25]) for (const sl of [6, 12]) for (const fl of SW_FILTERS)
   STRATS.push({ id: `sw_${g.id}_tp${tp}_sl${sl}_${fl.id}`, entry: 'swing', ent: {}, swing: true, sig: g.id, tp, sl, hold: 60, filter: fl, name: `Con volumen · ${g.txt} · ${fl.txt} · objetivo +${Math.round((tp - 1) * 100)}% · stop -${sl}%` });
@@ -501,7 +516,7 @@ function addGen(g) {
     STRATS.push(st); STRAT.set(st.id, st); return st;
   }
   const E = ENTRIES.find(e => e.id === g.entry); if (!E) return null;
-  const FM = E.instant ? IFMAP : FMAP, fs = g.filters.map(id => FM.get(id)).filter(Boolean); if (!fs.length) return null;
+  const FM = E.instant ? IFMAP : E.call ? CFMAP : FMAP, fs = g.filters.map(id => FM.get(id)).filter(Boolean); if (!fs.length) return null;
   const ent = { ...E, up: g.up ?? E.up };
   const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
   const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true,
@@ -546,6 +561,7 @@ async function xCheckToken(t) {
   if (!X_URL || !t.f || xState.paused) return;
   try { const d = await xFetch({ mode: 'token', sym: t.symbol, mint: t.mint }); const ps = d.posts || []; t.f.xMentions = ps.length; t.f.xBig = ps.filter(p => (p.followers || 0) >= 1000).length; t.f.xChecked = true;
     if (ps.length) log('c', `X · $${esc(t.symbol)} mencionado ${ps.length} veces${t.f.xBig ? ` (${t.f.xBig} por cuentas con 1.000+ seguidores)` : ''}`);
+    if (t.f.xBig) onCall(t.mint, { src: 'X', chat: `${t.f.xBig} cuentas grandes`, first: !t.calledAt, top: false }).catch(() => {});
   } catch (e) { xState.err = e.message; }
 }
 
@@ -591,8 +607,8 @@ setInterval(sessSave, 5000); addEventListener('pagehide', () => { sessSave(); sa
 
 function connect() {
   ws = new WebSocket(PP);
-  ws.onopen = () => { wsOk = true; ws.send(JSON.stringify({ method: 'subscribeNewToken' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
-  ws.onmessage = m => { let e; try { e = JSON.parse(m.data); } catch { return; } if (e.txType === 'create') onCreate(e); };
+  ws.onopen = () => { wsOk = true; ws.send(JSON.stringify({ method: 'subscribeNewToken' })); ws.send(JSON.stringify({ method: 'subscribeMigration' })); log('c', 'conectado a PumpPortal · escuchando lanzamientos'); };
+  ws.onmessage = m => { let e; try { e = JSON.parse(m.data); } catch { return; } if (e.txType === 'create') onCreate(e); else if (e.txType === 'migrate' || e.txType === 'migration' || (e.mint && /migrat/i.test(String(e.txType || e.type || '')))) onMigrate(e); };
   ws.onclose = () => { ws = null; if (running) setTimeout(() => running && connect(), 3000); };
   ws.onerror = () => {};
 }
@@ -692,6 +708,8 @@ async function evaluate(mint) {
     accel: buys.filter(x => x.ts > half).length > buys.filter(x => x.ts <= half).length, maxBuy: Math.max(0, ...ext.map(x => x.sol)), copies: t.copies, mayhem: t.mayhem,
     devLaunchPct: t.devTokens / CFG.supply, slot0Pct: slot0Tokens / CFG.supply, top10, impact, sniperHeld, devHeld, sameTx, pack,
     recent30: trades.filter(x => x.ts >= tEnd - 30).length,
+    buckets: (() => { const b = new Map(); for (const x of trades) { const k = Math.floor((x.ts - t0) / 20); b.set(k, (b.get(k) || 0) + 1); } return [...b.values()].filter(c => c >= 2).length; })(),
+    range: (() => { const m = trades.map(x => x.mcap).filter(v => v > 0); return m.length ? Math.max(...m) / Math.min(...m) : 1; })(),
   };
   // Puntuación de riesgo 0–100 (100 = más limpio). Pesos propios inspirados en reglas públicas de escáneres de holders
   f.score = f.uniqueBuyers < 3 ? 0 : Math.round(35 * lin(impact, 0.10, 0.60) + 20 * lin(f.slot0Pct, 0.05, 0.30) + 15 * lin(sniperHeld, 0.01, 0.15) + 15 * lin(top10, 0.25, 0.70) + 15 * lin(f.devLaunchPct, 0.03, 0.15));
@@ -715,6 +733,7 @@ async function evaluate(mint) {
     return;
   }
   f.tgCalls = t.tgCalls || 0;
+  f.moving = f.recent30 >= 3 && f.range >= 1.15; f.sustained = f.buckets >= 3 && f.recent30 >= 3;
   f.smartList = t.early.filter(e => TOP.has(e.u)).map(e => e.u); f.smart = f.smartList.length;
   if (f.smart) log('g', `TOP $${esc(t.symbol)} · ${f.smart} trader${f.smart > 1 ? 's' : ''} top entre los primeros compradores`);
   t.f = f; t.decAt = Date.now(); t.m20 = t.mcap; t.max = t.mcap; t.min = t.mcap; t.evalAt = Date.now(); t.lastChange = Date.now(); t.phase = 'tracking';
@@ -739,7 +758,7 @@ function tryEntries(t, now) {
   const alive = now - t.lastChange < 120e3;
   const open = s => { t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); };
   for (const s of STRATS) {
-    if (s.swing || s.ent.instant) continue;
+    if (s.swing || s.ent.instant || s.ent.call) continue;
     if (t.decided.has(s.id)) continue;
     if (data.discarded[s.id]) { t.decided.add(s.id); continue; }   // descartada: ya no se prueba
     if (s.ent.min) {                     // entrada tardía: solo monedas que siguen vivas, subiendo y cerca de máximos
@@ -959,6 +978,7 @@ function innovate() {
     const base = specOf(s), ideas = [];
     // Nuevo (ciclo 2026-11-25): "nomayhem" y "bundle" (y su combinación) son las señales con más acierto medido
     // hasta ahora (ver nomayhem_bundle); antes la innovación no las consideraba nunca como filtro extra.
+    if (s.ent?.call) continue;
     const inst = !!s.ent?.instant, M = s.swing ? SWF : inst ? IFMAP : FMAP, extra = (s.swing ? ['trend', 'liq100'] : inst ? ['nocopy', 'noserial', 'devbig'] : ['nomayhem_bundle', 'nomayhem', 'bundle', 'clean', 'smart', 'accel', 'devok', 'score60']).find(f => M.has(f) && !base.filters.includes(f) && (!base.filters.includes('all') || f === (s.swing ? 'trend' : inst ? 'nocopy' : 'nomayhem_bundle')));
     const tr = (data.trs || []).filter(x => x.id === b.id), wentUp = tr.filter(x => x.reason === 'stop' && x.mfe >= 1.1).length;
     if (fs >= 0.5) {
@@ -1007,7 +1027,7 @@ async function swRefresh() {
   const ok = Object.values(best).filter(p => (p.liquidity?.usd || 0) >= SWC.minLiq && (p.volume?.h1 || 0) >= SWC.minVolH1 && Date.now() - (p.pairCreatedAt || 0) > 3600e3 && +p.priceUsd > 0).sort((a, b) => b.volume.h1 - a.volume.h1).slice(0, SWC.n);
   if (!ok.length) { swErr = 'sin candidatas ahora mismo'; return; }
   const keep = new Set(ok.map(p => p.baseToken.address));
-  for (const [m, t] of swing) if (!keep.has(m) && !t.pos.size) swing.delete(m);
+  for (const [m, t] of swing) if (!keep.has(m) && !t.pos.size && !(t.grad && Date.now() - t.grad < 6 * 3600e3) && !(t.calledAt && Date.now() - t.calledAt < 2 * 3600e3)) swing.delete(m);
   for (const p of ok) {
     const m = p.baseToken.address; let t = swing.get(m);
     if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); }
@@ -1033,6 +1053,46 @@ function swSignals(t, now) {
     else if (d.low && p >= d.low * 1.03) { sig.push(k); d.low = null; } }
   if (t.prevP && t.prevP <= hi && p > hi * 1.01) sig.push('breakout');
   t.prevP = p; return sig;
+}
+function swAdd(p, extra) {   // añade una moneda de DEX a la vigilancia (graduadas, llamadas…)
+  const m = p.baseToken.address; let t = swing.get(m);
+  if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); }
+  Object.assign(t, extra || {}); swUpd(t, p); return t;
+}
+// Radar: cuando una moneda de Pump.fun se gradúa, pasa a PumpSwap (comisión ~0,25%) y se opera ahí
+async function onMigrate(e) {
+  const mint = e.mint; if (!mint || !running) return;
+  log('c', `GRADUADA ${mint.slice(0, 4)}…${mint.slice(-4)} · pasa a PumpSwap`);
+  for (const wait of [45e3, 120e3, 300e3]) {
+    await new Promise(r => setTimeout(r, wait));
+    const ps = await jget('https://api.dexscreener.com/tokens/v1/solana/' + mint) || [];
+    const p = ps.filter(x => x.dexId !== 'pumpfun' && +x.priceUsd > 0).sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
+    if (!p) continue;
+    const t = swAdd(p, { grad: Date.now() });
+    log('c', `GRADUADA $${esc(t.symbol)} · en ${esc(p.dexId)} con ${Math.round(p.liquidity?.usd || 0).toLocaleString('es-ES')} $ de liquidez`);
+    swEnter(t, ['grad'], Date.now()); return;
+  }
+}
+// Una comunidad de Telegram (o X) llama una moneda: se compra al momento, sin esperar al volumen
+async function onCall(mint, info) {
+  if (!running || !mint) return;
+  let t = tokens.get(mint);
+  if (t) { t.callInfo = info; t.calledAt = Date.now(); callEnter(t); return; }
+  const sw = swing.get(mint); if (sw) { sw.calledAt = Date.now(); swEnter(sw, ['call'], Date.now()); return; }
+  const ps = await jget('https://api.dexscreener.com/tokens/v1/solana/' + mint) || [];
+  const p = ps.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0]; if (!p || !(+p.priceUsd > 0)) return;
+  if (p.dexId === 'pumpfun') {   // sigue en la curva: el par de DexScreener es la propia curva
+    const acc = await rpc('getMultipleAccounts', [[p.pairAddress], { encoding: 'base64' }], true).catch(() => null);
+    const cur = acc?.value?.[0] ? curveRead(acc.value[0].data[0]) : null; if (!cur?.mcap || cur.complete) return;
+    t = { mint, name: String(p.baseToken.name || '').slice(0, 40), symbol: String(p.baseToken.symbol || '?').slice(0, 12), bc: p.pairAddress, createdAt: p.pairCreatedAt || Date.now(), hour: madridHour(Date.now()),
+      mcap: cur.mcap, max: cur.mcap, min: cur.mcap, max0: cur.mcap, lastChange: Date.now(), phase: 'lite', pos: new Map(), decided: new Set(), state: 'eval', ang: Math.random() * Math.PI * 2, born: performance.now(), callInfo: info, calledAt: Date.now() };
+    tokens.set(mint, t); callEnter(t);
+  } else { const tt = swAdd(p, { calledAt: Date.now() }); swEnter(tt, ['call'], Date.now()); }
+}
+function callEnter(t) {
+  const now = Date.now(); let n = 0;
+  for (const s of STRATS) { if (!s.ent?.call || data.discarded[s.id] || t.pos.has(s.id) || !s.filter.f(t.f || {}, t)) continue; t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); n++; }
+  if (n) { log('g', `LLAMADA $${esc(t.symbol)} · ${esc(t.callInfo?.src || 'comunidad')}${t.callInfo?.chat ? ' · ' + esc(t.callInfo.chat) : ''} · ${n} estrategias entran al momento`); tape('g', 'LLAMADA', `$${t.symbol}`); }
 }
 function swEnter(t, sigs, now) {
   if (!sigs.length) return;
@@ -1092,9 +1152,9 @@ function aiApply(item) {
   else if (a.tipo === 'tp') g.tp = +cl(+v, 1.03, 10).toFixed(2);
   else if (a.tipo === 'hold') g.hold = cl(Math.round(+v), 5, 120);
   else if (a.tipo === 'trail') g.trail = cl(Math.round(+v), 3, 50);
-  else if (a.tipo === 'entry') { if (s.swing || s.ent.instant || v === 'instant' || !ENTRIES.some(e => e.id === v)) return 'entrada no válida'; g.entry = v; }
+  else if (a.tipo === 'entry') { if (s.swing || s.ent.instant || s.ent.call || v === 'instant' || v === 'call' || !ENTRIES.some(e => e.id === v)) return 'entrada no válida'; g.entry = v; }
   else if (a.tipo === 'up') { if (s.swing) return 'no aplica'; g.up = +cl(+v, 1.1, 3).toFixed(1); }
-  else if (a.tipo === 'add_filter') { const M = s.swing ? SWF : s.ent.instant ? IFMAP : FMAP; if (!M.has(v) || g.filters.includes(v)) return 'filtro no válido'; g.filters = g.filters.filter(f => f !== 'all').concat(v); }
+  else if (a.tipo === 'add_filter') { const M = s.swing ? SWF : s.ent.instant ? IFMAP : s.ent.call ? CFMAP : FMAP; if (!M.has(v) || g.filters.includes(v)) return 'filtro no válido'; g.filters = g.filters.filter(f => f !== 'all').concat(v); }
   else if (a.tipo === 'remove_filter') { if (!g.filters.includes(v) || g.filters.length < 2) return 'no se puede quitar'; g.filters = g.filters.filter(f => f !== v); }
   else return 'arreglo no permitido';
   if (Object.values(g).some(x => typeof x === 'number' && !Number.isFinite(x))) return 'valor no válido';
@@ -1598,7 +1658,7 @@ $('copy').onclick = async () => {
   setTimeout(() => $('copy').textContent = 'Copiar resumen CSV', 2000);
 };
 window.__arena = { data, STRATS, scoreOf, tokens: () => tokens.size, constel, cam };
-window.__snlab = { tokens, log, cfg: CFG, solEur: () => solEur };
+window.__snlab = { tokens, log, cfg: CFG, solEur: () => solEur, onCall: (m, i) => onCall(m, i).catch(() => {}) };
 setInterval(render, 1000); render();
 if (sess?.running) { setRunning(true); log('c', 'sesión recuperada tras recargar · el bot sigue donde estaba'); }
 }

@@ -115,6 +115,7 @@
       const t = S().tokens?.get?.(mint);
       if (t) { t.tgCalls = (t.tgCalls || 0) + 1; if (t.f) t.f.tgCalls = t.tgCalls; }
       if (live) log('c', `TG · ${esc(title)} llama ${t ? '$' + esc(t.symbol) : mint.slice(0, 4) + '…' + mint.slice(-4)}${t ? ' (el bot ya la seguía)' : ''}`);
+      if (live && Date.now() - at < 5 * 60e3) { const r = ranking().find(x => x.id === chatId); S().onCall?.(mint, { src: 'Telegram', chat: title, first: call.first, top: !!(r && r.n >= SIM.minN && r.lb > 0) }); }
     }
   }
 
