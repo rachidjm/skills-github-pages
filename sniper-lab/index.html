@@ -1172,7 +1172,17 @@ async function swPoll() {
       const chunk = list.slice(i, i + 30), ps = await jget('https://api.dexscreener.com/tokens/v1/solana/' + chunk.map(t => t.mint).join(',')); if (!ps) continue;
       const byPair = new Map(ps.map(p => [p.pairAddress, p])), now = Date.now();
       for (const t of chunk) { const p = byPair.get(t.pair); if (!p || !(+p.priceUsd > 0)) continue;
-        const price = +p.priceUsd; t.mcap = price; t.max = Math.max(t.max, price); t.min = Math.min(t.min, price); swUpd(t, p);
+        const price = +p.priceUsd, liqUsd = p.liquidity?.usd || 0;
+        // Arreglo (2026-11-26): $YEE (varios tickers clonados, uno con 12-26 $ de liquidez real) dio una cotización
+        // de 38.000.000x que infló "en juego ahora" a +376 millones € — un pool así de vacío no soporta ese precio
+        // de verdad, es manipulación o fallo del dato. Si sube >25x de golpe con <50.000 $ de liquidez, se descarta
+        // esta lectura entera (no toca mcap/max/min/serie, no llama a settle ni a swEnter): se vuelve a mirar en 20 s.
+        // Las bajadas (incluida la vuelta a la normalidad tras un salto falso) nunca se bloquean.
+        if (t.mcap > 0 && price / t.mcap > 25 && liqUsd < 50000) {
+          log('r', `AVISO precio descartado $${esc(t.symbol)}: saltó a ${(price / t.mcap).toFixed(0)}x con solo ${Math.round(liqUsd).toLocaleString('es-ES')} $ de liquidez · probable manipulación o fallo del dato`);
+          continue;
+        }
+        t.mcap = price; t.max = Math.max(t.max, price); t.min = Math.min(t.min, price); swUpd(t, p);
         t.s.push({ ts: now, h: price, l: price }); if (t.s.length > 900) t.s.splice(0, t.s.length - 900);
         settle(t, now);
         if (running) swEnter(t, swSignals(t, now), now); }
