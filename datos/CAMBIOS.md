@@ -2,6 +2,18 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-26 — deslizamiento según liquidez real (monedas con volumen), a petición de Rachid
+
+"Si filtramos mucho la moneda pero luego la ejecución la caga, no vale de nada" — hasta ahora el coste de comprar/vender en monedas con volumen era un % fijo (0,3% comisión + 0,5% deslizamiento), igual para un pool de 200.000 $ que para uno de 2.000 $. En la vida real, meter el mismo dinero en un pool minúsculo mueve mucho más el precio — justo el tipo de pool que ha dado el bug de los millones dos veces ($YEE con 12-26 $ de liquidez, $Pinky después).
+
+**Qué cambia** ([index.html:1176](sniper-lab/index.html#L1176), función `swImpactPct`): aproximación estándar de un pool de producto constante (x·y=k) — el impacto medio de meter una cantidad "s" en una reserva de tamaño R es ~s/(2R); como la "liquidez" que da DexScreener es el valor combinado de las dos reservas (R ≈ liquidez/2), el impacto queda ~s/liquidez. Con los 10 € de apuesta de siempre: en un pool de 30.000 $ (el mínimo que ya exige `SWC.minLiq`) el impacto extra es ~0,03% — no cambia nada en la mayoría del torneo. En un pool de 5.000 $ (como el $YEE "bueno") sube a ~0,2%. En un pool de 13 $ (el $YEE malo) sale ~77%, con tope al 40% para no dividir por casi cero — una estrategia que entrara ahí mostraría una pérdida casi segura por el propio coste de entrar, en vez de parecer gratis como antes.
+
+Se aplica en `netSwing()` (estadísticas del torneo) y en `pfValue()` (dinero real de la cartera "Automática"/BOT), en todos los sitios donde se usan — no se ha tocado ninguna estrategia, es el mismo tipo de ajuste al modelo de coste compartido que ya eran las comisiones fijas.
+
+**Lo que queda fuera, con honestidad:** solo cubre "monedas con volumen" (`swing`); las monedas nuevas de pump.fun (`netReturn()`) siguen con coste fijo — ahí el mecanismo es distinto (curva de bonding, no un pool AMM clásico) y necesitaría su propio diseño si se quiere hacer igual de realista.
+
+**Qué esperar en el próximo export:** las estrategias que entran en pools muy finos (grad/call/whalehunt sin filtro liq100, sobre todo) deberían verse peor que antes — eso es lo correcto, no un empeoramiento real del bot, es que ahora se mide con más honestidad.
+
 ## 2026-11-26 — el bug de los millones se repitió ($Pinky, x221.798.046): segunda red de seguridad
 
 El primer arreglo (solo saltos >25x con <50.000 $ de liquidez) no bastó — Rachid lo vio repetirse con $Pinky mostrando +€2.179.962.561 "en juego ahora". Hipótesis más probable: una "escalera" de varios saltos medianos seguidos, cada uno por debajo del 25x y por tanto nunca descartado, acumulándose contra un precio base que ya se iba moviendo (el umbral comparaba siempre contra el ÚLTIMO precio aceptado, que ya podía estar algo inflado) — y/o la liquidez reportada también mal en ese instante, esquivando esa parte de la condición.

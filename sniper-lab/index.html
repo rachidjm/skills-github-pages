@@ -866,7 +866,7 @@ function settle(t, now, forceAll = false) {
     const raw = reason === 'objetivo' ? Math.min(m, s.tp) : m;
     if (!Number.isFinite(raw)) { t.pos.delete(id); continue; }
     pfOnClose(t, id, raw, reason, now);
-    record(id, s.swing ? netSwing(raw) : netReturn(raw), t, reason, now, p);
+    record(id, s.swing ? netSwing(raw, t.liq) : netReturn(raw), t, reason, now, p);
     t.pos.delete(id);
   }
 }
@@ -1173,8 +1173,14 @@ function getTok(m) { return tokens.get(m) || swing.get(m); }
 // Las señales (reclaim/dip/breakout) son las que más operaciones dan, pero solo 30 candidatas es poco margen para
 // que salten — subido a 60 y de 3 a 5 páginas de GeckoTerminal (más abajo) para tener más candidatas donde elegir
 // antes del filtro de liquidez/volumen. Coste: el doble de llamadas a DexScreener cada 20 s, ambas gratis y sin clave.
-const SWC = { fee: 0.3, slip: 0.5, notional: 10, minLiq: 30000, minVolH1: 10000, n: 60 };
-function netSwing(raw) { const c = (SWC.fee + SWC.slip) / 100, fix = CFG.netFeeSol * solEur / SWC.notional; return (((1 - fix) / (1 + c)) * raw * (1 - c) - fix - 1) * 100; }
+const SWC = { fee: 0.3, slip: 0.5, notional: 10, minLiq: 30000, minVolH1: 10000, n: 60, impactK: 1 };
+// Arreglo (2026-11-26, a petición de Rachid): el deslizamiento era un % fijo (0,5%) igual para un pool de 200.000 $
+// que para uno de 2.000 $ — en la vida real, meter el mismo dinero en un pool minúsculo mueve mucho más el precio.
+// Aproximación estándar de un pool de producto constante (x·y=k): el impacto medio de meter "s" en una reserva de
+// tamaño R es ~s/(2R); como "liquidez" en DexScreener es el valor combinado de las dos reservas (R ≈ liq/2), el
+// impacto queda ~s/liq. Tope 40% para no dividir por casi cero en un pool vacío como el de $YEE/$Pinque (12-26 $).
+function swImpactPct(notional, liq) { return Math.min(40, 100 * notional / Math.max(liq || 1e9, 1) * SWC.impactK); }
+function netSwing(raw, liq) { const c = (SWC.fee + SWC.slip + swImpactPct(SWC.notional, liq)) / 100, fix = CFG.netFeeSol * solEur / SWC.notional; return (((1 - fix) / (1 + c)) * raw * (1 - c) - fix - 1) * 100; }
 const jget = async u => { try { const r = await fetch(u); return r.ok ? await r.json() : null; } catch { return null; } };
 let swGeckoNext = 0;
 async function swGecko(u) { const w = swGeckoNext - Date.now(); swGeckoNext = Math.max(Date.now(), swGeckoNext) + 2500; if (w > 0) await new Promise(r => setTimeout(r, w)); return jget(u); }
@@ -1482,10 +1488,10 @@ const botWhy = { seen: 0, veto: 0, data: 0, filter: 0, ok: 0 };
 const pfSave = () => { try { localStorage.setItem(PF_KEY, JSON.stringify(pf)); } catch {} };
 setInterval(pfSave, 10000);
 // € que recibes al vender: comisiones %, slippage y fee de red fijo por transacción
-function pfValue(inv, raw, sw) { const cost = sw ? (SWC.fee + SWC.slip) / 100 : (CFG.feePct + CFG.slipPct) / 100, fix = CFG.netFeeSol * solEur; const bought = Math.max(0, inv - fix) / (1 + cost); return Math.max(0, bought * raw * (1 - cost) - fix); }
+function pfValue(inv, raw, sw, liq) { const cost = (sw ? (SWC.fee + SWC.slip + swImpactPct(inv, liq)) : (CFG.feePct + CFG.slipPct)) / 100, fix = CFG.netFeeSol * solEur; const bought = Math.max(0, inv - fix) / (1 + cost); return Math.max(0, bought * raw * (1 - cost) - fix); }
 // Las posiciones abiertas antes de recargar la página ya no se siguen: se cierran a precio de entrada (menos costes)
 // Al recargar, las posiciones siguen abiertas si su token se ha recuperado; si no, se cierran al último precio conocido
-for (const [k, p] of Object.entries(pf.positions)) { if (getTok(p.mint)?.pos?.has(p.id)) continue; const got = pfValue(p.inv, p.lastRaw || 1, STRAT.get(p.id)?.swing); pf.cash += got; pf.closed.unshift({ ts: Date.now(), symbol: p.symbol, mint: p.mint, id: p.id, inv: p.inv, got, reason: 'cerrada al recargar', held: (Date.now() - p.at) / 1000, eqAfter: pf.cash }); delete pf.positions[k]; }
+for (const [k, p] of Object.entries(pf.positions)) { if (getTok(p.mint)?.pos?.has(p.id)) continue; const got = pfValue(p.inv, p.lastRaw || 1, STRAT.get(p.id)?.swing, getTok(p.mint)?.liq); pf.cash += got; pf.closed.unshift({ ts: Date.now(), symbol: p.symbol, mint: p.mint, id: p.id, inv: p.inv, got, reason: 'cerrada al recargar', held: (Date.now() - p.at) / 1000, eqAfter: pf.cash }); delete pf.positions[k]; }
 function pfTarget() {
   if (pf.strategy !== 'auto' && STRAT.has(pf.strategy)) return pf.strategy;
   // Arreglo (2026-11-25, 3er export): si la campeona está descartada no debe usarse para operar ni para
@@ -1495,7 +1501,7 @@ function pfTarget() {
   const c = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
   return c ? c.id : FALLBACK;
 }
-function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = getTok(p.mint); inv += p.inv; val += pfValue(p.inv, t ? Math.min(t.mcap / p.entry, PRICE_SANE_CAP) : 1, STRAT.get(p.id)?.swing); } return { inv, val }; }
+function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = getTok(p.mint); inv += p.inv; val += pfValue(p.inv, t ? Math.min(t.mcap / p.entry, PRICE_SANE_CAP) : 1, STRAT.get(p.id)?.swing, t?.liq); } return { inv, val }; }
 const pfEquity = () => pf.cash + pfOpenValue().val;
 // Modo automático: la cartera opera con las 10 mejores estrategias a la vez (campeona primero), una posición por moneda
 let pfSetCache = { ts: 0, ids: new Set() };
@@ -1540,7 +1546,7 @@ function pfOnOpen(t, id) {
 }
 function pfOnClose(t, id, raw, reason, now) {
   const key = t.mint + '|' + id, p = pf.positions[key]; if (!p) return;
-  const got = pfValue(p.inv, Number.isFinite(raw) ? raw : 1, STRAT.get(id)?.swing); pf.cash += got; delete pf.positions[key];
+  const got = pfValue(p.inv, Number.isFinite(raw) ? raw : 1, STRAT.get(id)?.swing, t.liq); pf.cash += got; delete pf.positions[key];
   pfCheckDay(); pf.dayPl += got - p.inv;
   const eq = pfEquity(), pl = got - p.inv;
   pf.closed.unshift({ ts: now, symbol: p.symbol, mint: p.mint, id, inv: p.inv, got, reason, held: (now - p.at) / 1000, eqAfter: eq });
@@ -1640,7 +1646,7 @@ function renderBot() {
   drawEq(); drawDonut(pf.cash, Math.min(inv, val), Math.max(0, val - inv));
   // Posiciones abiertas
   const rows = Object.values(pf.positions).map(p => {
-    const t = getTok(p.mint), raw = t ? Math.min(t.mcap / p.entry, PRICE_SANE_CAP) : 1, st = STRAT.get(p.id), v = pfValue(p.inv, raw, st?.swing), d = v - p.inv, lo = 1 - st.sl / 100;
+    const t = getTok(p.mint), raw = t ? Math.min(t.mcap / p.entry, PRICE_SANE_CAP) : 1, st = STRAT.get(p.id), v = pfValue(p.inv, raw, st?.swing, t?.liq), d = v - p.inv, lo = 1 - st.sl / 100;
     const at = Math.max(0, Math.min(100, 100 * Math.log(raw / lo) / Math.log(st.tp / lo)));
     return `<tr><td><b>$${esc(p.symbol)}</b><br><span class="sub">${esc(st.name)}</span></td><td>${money(p.inv)}</td><td>${money(v)}</td><td class="big-pl" style="color:${col(d)}">${signed(d)}<br><span style="font-size:11px">${pc(100 * d / p.inv)}</span></td><td>${raw.toFixed(2).replace('.', ',')}x</td><td><span class="barx"><i style="left:${at}%"></i></span></td><td>${dur((Date.now() - p.at) / 1000)}</td></tr>`;
   });
