@@ -581,7 +581,7 @@ try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.stats) data 
 data.reasons ??= { objetivo: 0, stop: 0, tiempo: 0, 'sin actividad': 0 }; data.discarded ??= {}; data.totals ??= { seen: 0, veto: 0, entry: 0 }; data.last ??= [];
 data.hours = Array.from({ length: 24 }, (_, i) => ({ tokens: 0, x2: 0, rug: 0, vol: 0, done: 0, veto: 0, evald: 0, ...(data.hours?.[i] || {}) }));
 data.gen ??= []; data.ideas ??= []; data.pf ??= [];
-for (const d of data.pf) regPatternFilter(d);
+for (const d of data.pf) (d.side === 'sw' ? regSwingPatternFilter : regPatternFilter)(d);
 for (const g of data.gen) addGen(g);
 for (const s of STRATS) data.stats[s.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
 // Reparación: resultados inválidos (NaN guardado como null) de una versión anterior
@@ -994,6 +994,74 @@ function minePatterns() {
 }
 setInterval(minePatterns, 5 * 60e3); setTimeout(minePatterns, 20e3);
 
+// ===================== Minería de patrones para "monedas con volumen" (2026-11-26, a petición de Rachid) =====================
+// Lo mismo que minePatterns() de arriba, pero para el mundo swing (reclaim/dip/breakout/whalehunt/grad/call con
+// volumen), que hasta ahora no estaba cubierto — solo existían filtros fijos (liq100, trend). Cada vez que salta
+// una señal se guarda una muestra con los datos de ese momento (liquidez, volumen, tendencia, si el contrato está
+// renunciado); 60 minutos después se mira qué subida alcanzó de verdad el precio y se cierra la muestra. Si un
+// rasgo predice bien, se crea sola una estrategia nueva, con su propio id — nunca toca las que ya existen.
+const SW_FEATS = { liq: 'liquidez ($)', volH1: 'volumen 1h ($)', vol24: 'volumen 24h ($)', ch1: 'cambio en 1h (%)', ch6: 'cambio en 6h (%)', fdv: 'capitalización ($)', whaleSafe: 'contrato renunciado (sin autoridad de mint/freeze)' };
+const SWSKEY = 'snlab_sw_samples_v1';
+let swSamples = []; try { swSamples = JSON.parse(localStorage.getItem(SWSKEY)) || []; } catch {}
+let swPending = [];   // {ts, mint, entry, feats} — a la espera de que pasen 60 min para ver qué subida alcanzó
+function swSample(t, now) {
+  const feats = Object.fromEntries(Object.keys(SW_FEATS).map(k => [k, typeof t[k] === 'boolean' ? t[k] : +(+t[k] || 0).toFixed(4)]));
+  swPending.push({ ts: now, mint: t.mint, entry: t.mcap, feats });
+  if (swPending.length > 1000) swPending.splice(0, swPending.length - 1000);
+}
+function finishSwPending() {
+  const now = Date.now(), ready = swPending.filter(p => now - p.ts >= 60 * 60e3);
+  if (!ready.length) return;
+  swPending = swPending.filter(p => now - p.ts < 60 * 60e3);
+  for (const p of ready) {
+    const t = swing.get(p.mint); if (!t || !okPx(p.entry)) continue;   // si ya no se vigila, se pierde la muestra (no se puede saber qué pasó)
+    const w = t.s.filter(x => x.ts >= p.ts && x.ts <= p.ts + 60 * 60e3); if (!w.length) continue;
+    swSamples.push({ ts: p.ts, feats: p.feats, y: +(Math.max(...w.map(x => x.h)) / p.entry).toFixed(3) });
+  }
+  if (swSamples.length > 4000) swSamples.splice(0, swSamples.length - 4000);
+  try { localStorage.setItem(SWSKEY, JSON.stringify(swSamples)); } catch {}
+}
+function regSwingPatternFilter(d) {
+  if (SWF.has(d.id)) return;
+  const f = d.dir === 'is' ? x => !!x?.[d.feat] === d.thr : d.dir === 'ge' ? x => +x?.[d.feat] >= d.thr : x => +x?.[d.feat] <= d.thr;
+  SWF.set(d.id, { id: d.id, txt: d.txt, f, pattern: true });
+}
+let swPatterns = { out: [], base: 0, n: 0 };
+function mineSwingPatterns() {
+  finishSwPending();
+  const pop = swSamples, lab = x => x.y >= 1.15;   // "éxito" = llegó a +15% en la hora siguiente a la señal
+  if (pop.length < 120) { swPatterns.n = pop.length; return; }
+  const base = pop.filter(lab).length / pop.length; swPatterns.base = base; swPatterns.n = pop.length;
+  const out = [];
+  for (const [feat, label] of Object.entries(SW_FEATS)) {
+    const vals = pop.map(x => x.feats[feat]);
+    const tests = [];
+    if (typeof vals[0] === 'boolean') tests.push(['is', true, `${label}`], ['is', false, `sin ${label}`]);
+    else { const v = vals.filter(Number.isFinite).sort((a, b) => a - b); if (v.length < 60) continue; const q1 = v[Math.floor(v.length / 3)], q2 = v[Math.floor(2 * v.length / 3)];
+      if (q2 > v[0]) tests.push(['ge', q2, `${label} ≥ ${fmtThr(q2)}`]); if (q1 < v.at(-1)) tests.push(['le', q1, `${label} ≤ ${fmtThr(q1)}`]); }
+    for (const [dir, thr, txt] of tests) {
+      const sub = pop.filter(x => { const y = x.feats[feat]; return dir === 'is' ? !!y === thr : dir === 'ge' ? y >= thr : y <= thr; });
+      if (sub.length < 30) continue;
+      const k = sub.filter(lab).length, pr = k / sub.length;
+      out.push({ feat, dir, thr, txt, n: sub.length, p: pr, lb: wilson(k, sub.length), lift: base ? pr / base : 0, id: `pt_sw_${feat}_${dir}_${String(thr).replace('.', 'p')}` });
+    }
+  }
+  out.sort((a, b) => b.lb - a.lb); swPatterns.out = out;
+  let made = 0;
+  for (const pt of out.slice(0, 3)) {
+    if (made >= 2 || data.pf.length >= 40 || pt.lift < 1.4 || pt.lb < base * 1.15 || data.pf.some(x => x.id === pt.id)) continue;
+    const d = { id: pt.id, side: 'sw', feat: pt.feat, dir: pt.dir, thr: pt.thr, txt: pt.txt }; data.pf.push(d); regSwingPatternFilter(d);
+    for (const sig of ['reclaim', 'whalehunt']) {   // se prueba sobre las dos señales con más datos; el torneo decide el resto
+      const g = { entry: 'swing', sig, tp: 1.15, sl: 12, filters: [pt.id], hold: 60, up: null, trail: null };
+      g.id = genId(g); if (STRAT.has(g.id) || data.discarded[g.id]) continue;
+      g.parent = null; g.ts = Date.now(); g.why = `PATRÓN (volumen): ${pt.txt} → ${Math.round(pt.p * 100)}% llegan a +15% en 1 h (media ${Math.round(base * 100)}%, ${pt.n} muestras)`;
+      if (registerGen(g, { name: 'patrones de monedas con volumen' })) made++;
+    }
+  }
+  if (made) { save(); fillStratSelect(); }
+}
+setInterval(mineSwingPatterns, 5 * 60e3); setTimeout(mineSwingPatterns, 25e3);
+
 // ===================== Campeón =====================
 function scoreOf(id) {
   const r = data.stats[id].recent, n = r.length; if (n < 1) return null;
@@ -1128,8 +1196,8 @@ async function getTopHolders(mint) {
 }
 async function scanWhales(t) {
   if (t.whaleScanned) return; t.whaleScanned = true;
-  if (!(await isMintSafe(t.mint))) return;
-  const whales = await getTopHolders(t.mint); if (whales.length) { t.whaleSafe = true; t.whales = whales; }
+  t.whaleSafe = await isMintSafe(t.mint);   // siempre booleano (true/false), nunca undefined — lo usa mineSwingPatterns()
+  if (t.whaleSafe) t.whales = await getTopHolders(t.mint);
 }
 async function checkWhaleHunt(t) {
   if (t.whaleChecking || !t.whaleSafe || !t.whales?.length) return; t.whaleChecking = true;
@@ -1152,7 +1220,8 @@ async function swRefresh() {
   const ok = Object.values(best).filter(p => (p.liquidity?.usd || 0) >= SWC.minLiq && (p.volume?.h1 || 0) >= SWC.minVolH1 && Date.now() - (p.pairCreatedAt || 0) > 3600e3 && +p.priceUsd > 0).sort((a, b) => b.volume.h1 - a.volume.h1).slice(0, SWC.n);
   if (!ok.length) { swErr = 'sin candidatas ahora mismo'; return; }
   const keep = new Set(ok.map(p => p.baseToken.address));
-  for (const [m, t] of swing) if (!keep.has(m) && !t.pos.size && !(t.grad && Date.now() - t.grad < 6 * 3600e3) && !(t.calledAt && Date.now() - t.calledAt < 2 * 3600e3)) swing.delete(m);
+  const pendingMints = new Set(swPending.map(p => p.mint));   // no se borra si aún falta cerrar una muestra de mineSwingPatterns
+  for (const [m, t] of swing) if (!keep.has(m) && !t.pos.size && !pendingMints.has(m) && !(t.grad && Date.now() - t.grad < 6 * 3600e3) && !(t.calledAt && Date.now() - t.calledAt < 2 * 3600e3)) swing.delete(m);
   for (const p of ok) {
     const m = p.baseToken.address; let t = swing.get(m);
     if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); scanWhales(t); }
@@ -1226,6 +1295,7 @@ function callEnter(t) {
 function swEnter(t, sigs, now) {
   if (!sigs.length || !okPx(t.mcap)) return;
   t.sigs = sigs.map(x => ({ x, ts: now })).concat(t.sigs || []).slice(0, 5);
+  swSample(t, now);   // muestra para la minería de patrones de volumen (mineSwingPatterns), aparte de si alguna estrategia entra
   log('c', `VOLUMEN $${esc(t.symbol)} · ${sigs.map(x => SW_SIGS.find(g => g.id === x).txt).join(' · ')}`); tape('c', 'SEÑAL', `$${t.symbol}`);
   for (const s of STRATS) { if (!s.swing || !sigs.includes(s.sig) || data.discarded[s.id] || t.pos.has(s.id) || !s.filter.f(t, t)) continue; t.pos.set(s.id, { entry: t.mcap, at: now, exiting: null, trig: 0 }); pfOnOpen(t, s.id); }
 }
@@ -1890,7 +1960,7 @@ $('dump').onclick = () => {
   const tg = window.__tg?.st ? { calls: window.__tg.st.calls, chats: window.__tg.st.chats, sugg: window.__tg.st.sugg, ranking: window.__tg.ranking?.() } : null;
   const strategies = STRATS.map(s => { const x = scoreOf(s.id), st = data.stats[s.id]; return { id: s.id, name: s.name, gen: !!s.gen, exitAI: !!s.exitAI, discarded: !!data.discarded[s.id], n: st.n, wins: st.wins, sum: +st.sum.toFixed(2), reasons: st.rs || {}, mean: x ? +x.mean.toFixed(2) : null, lb: x ? +x.lb.toFixed(2) : null }; });
   const out = { exportedAt: new Date().toISOString(), version: 1, cfg: CFG, champ: data.champ, strategies, trades: data.trs || [], ideas: data.ideas, ai: data.ai, gen: data.gen, patternFilters: data.pf, hours: data.hours, reasons: data.reasons, totals: data.totals,
-    samples, patterns: { c: patterns.c, d: patterns.d, base0: patterns.base0, base1: patterns.base1 }, topWallets: topList, portfolio: { start: pf.start, cash: pf.cash, closed: pf.closed.slice(0, 200), strategy: pf.strategy, dailyLimit: pf.dailyLimit, dayPl: +((pf.dayPl || 0).toFixed(2)) }, telegram: tg,
+    samples, patterns: { c: patterns.c, d: patterns.d, base0: patterns.base0, base1: patterns.base1 }, swSamplesN: swSamples.length, swPending: swPending.length, swPatterns: { out: swPatterns.out.slice(0, 10), base: swPatterns.base, n: swPatterns.n }, topWallets: topList, portfolio: { start: pf.start, cash: pf.cash, closed: pf.closed.slice(0, 200), strategy: pf.strategy, dailyLimit: pf.dailyLimit, dayPl: +((pf.dayPl || 0).toFixed(2)) }, telegram: tg,
     swing: [...swing.values()].map(t => ({ mint: t.mint, symbol: t.symbol, dex: t.dex, liq: t.liq, volH1: t.volH1, ch1: t.ch1, ch6: t.ch6, sigs: t.sigs })) };
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
   a.download = `sniper-lab-datos-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);

@@ -2,6 +2,16 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-26 — la minería de patrones llega también a "monedas con volumen"
+
+Ampliación pedida por Rachid del motor `minePatterns()` (que solo cubría pump.fun) al mundo `swing` (reclaim/dip/breakout/whalehunt/grad/call), que es donde más se mueve el bot últimamente y no tenía minería automática.
+
+**Cómo funciona `mineSwingPatterns()`** ([index.html:995](sniper-lab/index.html#L995), corre cada 5 min): cada vez que salta cualquier señal de volumen se guarda una muestra con los datos de ese momento — liquidez, volumen 1h/24h, tendencia 1h/6h, capitalización y si el contrato está renunciado (reutiliza el arreglo de ballenas de hoy). 60 minutos después se mira qué subida alcanzó de verdad el precio en esa hora y se cierra la muestra. Con 120+ muestras, prueba cada rasgo contra el resto igual que ya hace `minePatterns()` con pump.fun (mejora un 40%+ sobre la media + margen estadístico → estrategia nueva, con su propio id, probada sobre `reclaim` y `whalehunt`). Tope: 2 estrategias nuevas por pasada, 40 en total (compartido con el otro minero).
+
+**Detalle técnico para que no se pierdan muestras:** si una moneda deja de estar en la lista de vigilancia (`swRefresh` la descarta por baja actividad) antes de que pasen los 60 minutos, se pierde esa muestra en concreto — ahora `swRefresh` no borra una moneda mientras tenga una muestra pendiente de cerrar, para perder las mínimas posibles.
+
+**Para el próximo ciclo:** revisar `swPatterns`/`swSamplesN` del export — con el bot recién reiniciado hoy varias veces, hará falta tiempo (horas) hasta acumular las 120 muestras mínimas para que el motor empiece a proponer algo.
+
 ## 2026-11-26 — las comunidades entran en la minería de patrones automática
 
 Rachid pidió que el bot invente estrategias solas según lo que vaya funcionando ("si las comunidades dan buenos calls, o si ciertas wallets tienen buena tasa de x2, que el bot se monte una estrategia"). Buena noticia: **ya existe un motor así, `minePatterns()`** (línea ~960), corriendo cada 5 minutos desde el primer ciclo — mira cada rasgo de `D_FEATS`/`C_FEATS` contra las monedas que subieron de verdad, y si uno predice bien (mejora un 40%+ sobre la media, con margen estadístico) se crea sola una estrategia nueva con ese rasgo como filtro, sin que nadie lo pida. Lo de "wallets con buena tasa de x2" también existe: `scoreWallets()`/`rankWallets()` llevan un ranking propio (cota de Wilson sobre el acierto a 2x) de cada wallet que compra pronto, y el mejor 50 entra en `D_FEATS.smart` — minePatterns() YA prueba ese rasgo solo.
