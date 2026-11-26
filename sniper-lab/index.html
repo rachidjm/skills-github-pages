@@ -514,6 +514,17 @@ for (const sl of [18, 24]) for (const fl of ['all', 'liq100']) {
     name: `Con volumen · rompe el suelo de 1 h y lo recupera · ${swf.txt} · objetivo +12% · stop -${sl}%` };
   STRATS.push(st); STRAT.set(st.id, st);
 }
+// Nuevo (ciclo 2026-11-26, 4º export): con datos reales, "call" y "grad" con filtro liq100 son las dos únicas
+// señales con volumen que sobreviven al descarte, y en ambas cuanto más alto el objetivo mejor: call pasa de
+// +0,84%/op (objetivo +12%) a +3,26%/op (objetivo +25%, n=16) y grad de +0,12%/op a +1,40%/op; call_tp1,25_sl6
+// es la primera variante en 4 ciclos con cota inferior positiva (+0,64%/op). Se prueba si seguir subiendo el
+// objetivo (+50%, +100%) sigue mejorando antes de que el coste del torneo (~1,6%/op) y el tiempo lo frenen.
+for (const g of ['call', 'grad']) for (const tp of [1.5, 2]) {
+  const swf = SW_FILTERS.find(f => f.id === 'liq100'), sg = SW_SIGS.find(x => x.id === g);
+  const st = { id: `sw_${g}_tp${tp}_sl6_liq100`, entry: 'swing', ent: {}, swing: true, sig: g, tp, sl: 6, hold: 60, filter: swf,
+    name: `Con volumen · ${sg.txt} · ${swf.txt} · objetivo +${Math.round((tp - 1) * 100)}% · stop -6%` };
+  STRATS.push(st); STRAT.set(st.id, st);
+}
 // Estrategias inventadas por el propio bot (se guardan y se reconstruyen al recargar)
 const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
 // ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
@@ -1275,10 +1286,24 @@ function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.
 const pfEquity = () => pf.cash + pfOpenValue().val;
 // Modo automático: la cartera opera con las 10 mejores estrategias a la vez (campeona primero), una posición por moneda
 let pfSetCache = { ts: 0, ids: new Set() };
+function pfFamily(s) { return s.swing ? `sw:${s.sig}:${s.filter.id}` : `${s.entry}:${s.filter.id}`; }
 function pfTargets() {
   if (pf.strategy !== 'auto') return new Set([pfTarget()]);
   if (Date.now() - pfSetCache.ts < 30000) return pfSetCache.ids;
-  const top = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb).slice(0, 10).map(x => x.id);
+  // Arreglo (2026-11-26, 4º export): la cartera automática pasó 18 h sin abrir ni una operación — el top-10 por
+  // lb se llenaba de variantes de tp/sl de las MISMAS 1-2 señales (4x sw_call + 6x sw_grad, las 10 con filtro
+  // liq100), dejando fuera reclaim/dip20/dip35/breakout y cualquier otra familia; con ~1.000 estrategias y solo
+  // 10-11 ids objetivo, casi nunca coincidía una entrada real con uno de esos ids concretos. Ahora se coge la
+  // MEJOR variante de cada combinación señal+filtro (o entrada+filtro) y se ordenan esas familias por lb, dando
+  // cobertura a más señales distintas en vez de redundancia de parámetros de las mismas 1-2.
+  const bestPerFamily = new Map();
+  for (const s of STRATS) {
+    if (data.discarded[s.id]) continue;
+    const x = scoreOf(s.id); if (!x || x.n < 10) continue;
+    const k = pfFamily(s), cur = bestPerFamily.get(k);
+    if (!cur || x.lb > cur.lb) bestPerFamily.set(k, x);
+  }
+  const top = [...bestPerFamily.values()].sort((a, b) => b.lb - a.lb).slice(0, 10).map(x => x.id);
   const champOk = data.champ && !data.discarded[data.champ.id];
   const ids = new Set([...(champOk ? [data.champ.id] : []), ...top].slice(0, 10)); if (!ids.size) ids.add(FALLBACK);
   pfSetCache = { ts: Date.now(), ids }; return ids;
