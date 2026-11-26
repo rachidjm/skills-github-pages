@@ -2,6 +2,24 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-26 — nueva señal "whalehunt" (caza de ballenas), idea de Rachid
+
+Estrategia propuesta por Rachid: no adivinar el suelo, usar a los grandes tenedores como rastreadores — si una ballena tira el precio para barrer stops pero se queda con la mayoría de su posición, va a recomprar más abajo; el bot entra justo cuando el precio recupera el suelo roto. Pidió montarlo sin pagar nada salvo que fuera estrictamente necesario.
+
+**Lo que se descartó por tener coste o requerir wallet:** PumpPortal ofrece `subscribeAccountTrade` (ver las operaciones de una wallet concreta al instante), que sería el equivalente perfecto — pero exige una wallet propia cargada con SOL y cobra 0,01 SOL por cada 10.000 mensajes. Incompatible con "nada de wallets ni dinero real" de este proyecto, así que no se usa.
+
+**Lo que se construyó, 100% gratis, con el RPC público que el bot ya usa:**
+- Al añadir una moneda a vigilancia (volumen, graduada o llamada), se comprueba una vez si el contrato está renunciado (`getAccountInfo`, sin autoridad de mint ni de congelación) y se guardan sus 8 mayores tenedores detrás del primero (`getTokenLargestAccounts` — se descarta el nº1 porque normalmente es el pool de liquidez, no un trader; no hay forma fiable y gratis de identificar la cuenta exacta del pool en Raydium/PumpSwap/Meteora a la vez, así que es una aproximación).
+- Solo cuando una de esas monedas YA rompe el suelo de la última hora (`brokeAt`, lo mismo que dispara "reclaim") se gasta una llamada extra (`getMultipleAccounts`, agrupada) para ver si alguno de esos tenedores vendió parte de su posición pero conserva el 65%-97% (vendió, no abandonó). Al limitarlo a roturas de suelo ya detectadas, el gasto extra de RPC es pequeño y puntual — no se sondea a las ~60 monedas en vigilancia todo el rato.
+- Si hay venta-y-retención reciente (últimos 10 min) cuando el precio recupera el suelo: se dispara la señal nueva `whalehunt` **además** de `reclaim`, nunca en su lugar — así las estrategias `sw_reclaim_*` que ya existen siguen exactamente igual que siempre, sin perder ni una operación. `whalehunt` entra en el mismo cruce de tp/sl/filtro que las demás señales con volumen (18 estrategias nuevas: 3 objetivos × 2 stops × 3 filtros), así que el torneo decide solos cuál combinación rinde.
+
+**Lo que se simplificó (documentado, no es un descuido):**
+- No se comprueba si el LP está quemado (su mint no es fácil de deducir sin una llamada específica por DEX) — solo que el token esté renunciado.
+- Sin datos tick a tick, la "cascada de pánico" de 1-5 segundos se aproxima con el mismo sondeo de precio de 20 s que ya usa `reclaim`/`dip`/`breakout` — unos segundos de retraso frente al ideal, pero coherente con la granularidad de todo el bot.
+- Salida a dos tramos (50% al recuperar soporte, 50% más arriba) no está implementada — el motor de salidas (`settle()`) asume una sola entrada/una sola salida para las 1000+ estrategias existentes; tocarlo para añadir ventas parciales es un cambio mucho más invasivo. Por ahora `whalehunt` usa el mismo objetivo/stop fijo que el resto de señales con volumen.
+
+**Qué esperar en el próximo export:** `sw_whalehunt_*` con operaciones (n>0) — si el filtro de ballena no añade nada, su media será parecida a `sw_reclaim_*` con el mismo tp/sl/filtro; si acierta la idea, debería rendir mejor que su equivalente sin ballena.
+
 ## 2026-11-26 — venta decidida por IA (botón manual) + límite de ganancia diaria
 
 A petición directa de Rachid: que las ventas no dependan solo de un stop loss fijo, sino que la IA pueda decidir con la información que tiene; y un límite de ganancia diaria para no dar devuelta lo ganado. Para no disparar el gasto en `ANTHROPIC_API_KEY`, se hace a mano, estrategia por estrategia, no automático para las 1016 a la vez.

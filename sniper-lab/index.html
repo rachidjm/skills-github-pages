@@ -483,7 +483,9 @@ for (const e of ENTRIES) for (const tp of TPS) for (const sl of SLS) for (const 
 // Llamadas con salida rápida: stop dinámico del 15% para salir antes de un posible rug
 { const CE = ENTRIES.find(e => e.call); for (const tp of TPS) for (const fl of CALL_FILTERS) STRATS.push({ id: `call_tp${tp}_sl25_${fl.id}_tr15`, entry: 'call', ent: CE, tp, sl: 25, trail: 15, hold: 10, filter: fl, name: `${CE.txt} · ${fl.txt} · objetivo ${String(tp).replace('.', ',')}x · stop -25% · stop dinámico 15% · salida 10 min` }); }
 // Monedas con volumen (ya crecidas): señales sobre su rango de la última hora
-const SW_SIGS = [{ id: 'grad', txt: 'recién graduada a PumpSwap (radar de Pump.fun)' }, { id: 'call', txt: 'la llama una comunidad o X' }, { id: 'reclaim', txt: 'rompe el suelo de 1 h y lo recupera' }, { id: 'dip20', txt: 'cae 20% desde el máximo de 1 h y rebota' }, { id: 'dip35', txt: 'cae 35% desde el máximo de 1 h y rebota' }, { id: 'breakout', txt: 'rompe el máximo de 1 h' }];
+// "whalehunt" (idea de Rachid, 2026-11-26): como "reclaim", pero solo cuenta si una de las mayores carteras del
+// token vendió parte de su posición justo antes (ver checkWhaleHunt más abajo) — un "reclaim" con más calidad.
+const SW_SIGS = [{ id: 'grad', txt: 'recién graduada a PumpSwap (radar de Pump.fun)' }, { id: 'call', txt: 'la llama una comunidad o X' }, { id: 'reclaim', txt: 'rompe el suelo de 1 h y lo recupera' }, { id: 'dip20', txt: 'cae 20% desde el máximo de 1 h y rebota' }, { id: 'dip35', txt: 'cae 35% desde el máximo de 1 h y rebota' }, { id: 'breakout', txt: 'rompe el máximo de 1 h' }, { id: 'whalehunt', txt: 'una ballena vende parte de su posición, rompe el suelo y el precio lo recupera' }];
 const SW_FILTERS = [{ id: 'all', txt: 'todas', f: () => true }, { id: 'trend', txt: 'tendencia de 6 h al alza', f: x => (x.ch6 || 0) > 0 }, { id: 'liq100', txt: 'liquidez ≥100k $', f: x => (x.liq || 0) >= 1e5 }];
 for (const g of SW_SIGS) for (const tp of [1.06, 1.12, 1.25]) for (const sl of [6, 12]) for (const fl of SW_FILTERS)
   STRATS.push({ id: `sw_${g.id}_tp${tp}_sl${sl}_${fl.id}`, entry: 'swing', ent: {}, swing: true, sig: g.id, tp, sl, hold: 60, filter: fl, name: `Con volumen · ${g.txt} · ${fl.txt} · objetivo +${Math.round((tp - 1) * 100)}% · stop -${sl}%` });
@@ -1096,6 +1098,45 @@ let swGeckoNext = 0;
 async function swGecko(u) { const w = swGeckoNext - Date.now(); swGeckoNext = Math.max(Date.now(), swGeckoNext) + 2500; if (w > 0) await new Promise(r => setTimeout(r, w)); return jget(u); }
 if (sess?.sw && Date.now() - sess.ts < 3 * 3600e3) for (const r of sess.sw) swing.set(r.mint, { ...r, pos: new Map(r.pos || []), decided: new Set(r.decided || []), dip: r.dip || {} });
 function swUpd(t, p) { t.liq = p.liquidity?.usd || 0; t.vol24 = p.volume?.h24 || 0; t.volH1 = p.volume?.h1 || 0; t.ch1 = p.priceChange?.h1 ?? 0; t.ch6 = p.priceChange?.h6 ?? 0; t.fdv = p.fdv || p.marketCap || 0; }
+// ===================== Caza de ballenas (idea de Rachid, 2026-11-26) =====================
+// Premisa: si una ballena (gran tenedor) tira el precio para barrer los stop loss de otros pero se queda con la
+// mayoría de su posición, su plan suele ser recomprar más abajo — el bot entra justo cuando el precio recupera
+// el suelo roto. Todo con el mismo RPC gratis que ya usa el bot (getTokenLargestAccounts/getMultipleAccounts),
+// sin wallet ni claves nuevas: PumpPortal tiene "subscribeAccountTrade" para ver esto al instante, pero exige
+// una wallet propia con SOL y cobra por mensaje — descartado por la regla de "nada de wallets ni dinero real".
+// Dos simplificaciones por no tener datos perfectos gratis:
+//  - Se descarta el mayor tenedor (normalmente el pool de liquidez o el equipo) y se vigilan los siguientes; no
+//    hay forma fiable y gratis de identificar la cuenta exacta del pool en Raydium/PumpSwap/Meteora a la vez.
+//  - No se comprueba si el LP está quemado (su mint no es fácil de deducir sin una llamada específica por DEX),
+//    solo que el token esté renunciado (sin autoridad de mint ni de congelación).
+// Solo se gasta RPC en ballenas de monedas que YA rompieron el suelo de la última hora (muy pocas a la vez de
+// las ~60 en vigilancia), para no cargar el nodo público que comparte el resto del bot.
+async function isMintSafe(mint) {
+  try { const r = await rpc('getAccountInfo', [mint, { encoding: 'jsonParsed' }]);
+    const info = r?.value?.data?.parsed?.info; return !!info && !info.mintAuthority && !info.freezeAuthority;
+  } catch { return false; }
+}
+async function getTopHolders(mint) {
+  try { const r = await rpc('getTokenLargestAccounts', [mint]);
+    return (r?.value || []).slice(1, 9).map(x => ({ addr: x.address, amt: +x.uiAmount || 0 })).filter(x => x.amt > 0);
+  } catch { return []; }
+}
+async function scanWhales(t) {
+  if (t.whaleScanned) return; t.whaleScanned = true;
+  if (!(await isMintSafe(t.mint))) return;
+  const whales = await getTopHolders(t.mint); if (whales.length) { t.whaleSafe = true; t.whales = whales; }
+}
+async function checkWhaleHunt(t) {
+  if (t.whaleChecking || !t.whaleSafe || !t.whales?.length) return; t.whaleChecking = true;
+  try {
+    const r = await rpc('getMultipleAccounts', [t.whales.map(w => w.addr), { encoding: 'jsonParsed' }], true);
+    const now = r?.value || [];
+    for (let i = 0; i < now.length; i++) {
+      const before = t.whales[i].amt, after = +(now[i]?.data?.parsed?.info?.tokenAmount?.uiAmount) || 0;
+      if (before > 0 && after >= before * 0.65 && after <= before * 0.97) { t.whaleHuntAt = Date.now(); break; }   // vendió algo, conserva 65-97%
+    }
+  } catch {} finally { t.whaleChecking = false; }
+}
 async function swRefresh() {
   swLastRefresh = Date.now();
   const cands = new Set(), SK = new Set(['So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY9NL8UdbTXkvVb1']);
@@ -1109,7 +1150,7 @@ async function swRefresh() {
   for (const [m, t] of swing) if (!keep.has(m) && !t.pos.size && !(t.grad && Date.now() - t.grad < 6 * 3600e3) && !(t.calledAt && Date.now() - t.calledAt < 2 * 3600e3)) swing.delete(m);
   for (const p of ok) {
     const m = p.baseToken.address; let t = swing.get(m);
-    if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); }
+    if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); scanWhales(t); }
     swUpd(t, p);
   }
   swErr = ''; log('c', `VOLUMEN · vigilando ${swing.size} monedas ya crecidas (liquidez ≥30k $ y ≥10k $ negociados en la última hora)`);
@@ -1123,9 +1164,13 @@ function swSignals(t, now) {
   const w = t.s.filter(x => x.ts >= now - 60 * 60e3 && x.ts <= now - 3 * 60e3); if (w.length < 15) return [];
   const hi = Math.max(...w.map(x => x.h)), lo = Math.min(...w.map(x => x.l)), p = t.mcap, sig = [];
   t.hi60 = hi; t.lo60 = lo;
-  if (p < lo) t.brokeAt = t.brokeAt || now;                                            // perfora el suelo: salta los stops de otros
-  if (t.brokeAt && now - t.brokeAt > 10 * 60e3) t.brokeAt = 0;
-  if (t.brokeAt && p >= lo * 1.005) { sig.push('reclaim'); t.brokeAt = 0; }            // …y lo recupera
+  if (p < lo) { if (!t.brokeAt) checkWhaleHunt(t); t.brokeAt = t.brokeAt || now; }     // perfora el suelo: salta los stops de otros
+  if (t.brokeAt && now - t.brokeAt > 10 * 60e3) { t.brokeAt = 0; t.whaleHuntAt = 0; }
+  if (t.brokeAt && p >= lo * 1.005) {                                                  // …y lo recupera
+    sig.push('reclaim');                                                              // sigue disparando igual que siempre, no se toca
+    if (t.whaleHuntAt && now - t.whaleHuntAt < 10 * 60e3) sig.push('whalehunt');       // además, si hubo venta de ballena: señal extra, no sustituye
+    t.brokeAt = 0; t.whaleHuntAt = 0;
+  }
   for (const X of [20, 35]) { const k = 'dip' + X, d = t.dip[k] || (t.dip[k] = { low: null });
     if (p <= hi * (1 - X / 100)) d.low = Math.min(d.low ?? p, p);
     if (d.low && p > hi * (1 - X / 200)) d.low = null;
@@ -1135,7 +1180,7 @@ function swSignals(t, now) {
 }
 function swAdd(p, extra) {   // añade una moneda de DEX a la vigilancia (graduadas, llamadas…)
   const m = p.baseToken.address; let t = swing.get(m);
-  if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); }
+  if (!t) { t = { mint: m, symbol: String(p.baseToken.symbol || '?').slice(0, 12), name: String(p.baseToken.name || '').slice(0, 40), pair: p.pairAddress, dex: p.dexId, swing: true, s: [], pos: new Map(), decided: new Set(), dip: {}, mcap: +p.priceUsd, max: +p.priceUsd, min: +p.priceUsd, addedAt: Date.now() }; swing.set(m, t); swSeed(t); scanWhales(t); }
   Object.assign(t, extra || {}); swUpd(t, p); return t;
 }
 // Radar: cuando una moneda de Pump.fun se gradúa, pasa a PumpSwap (comisión ~0,25%) y se opera ahí
