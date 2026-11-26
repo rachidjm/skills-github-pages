@@ -2,6 +2,18 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-26 — venta decidida por IA (botón manual) + límite de ganancia diaria
+
+A petición directa de Rachid: que las ventas no dependan solo de un stop loss fijo, sino que la IA pueda decidir con la información que tiene; y un límite de ganancia diaria para no dar devuelta lo ganado. Para no disparar el gasto en `ANTHROPIC_API_KEY`, se hace a mano, estrategia por estrategia, no automático para las 1016 a la vez.
+
+**1. Botón "Añadir IA" en la tabla de ASPIRANTES del laboratorio.** Clona la estrategia elegida (misma entrada, filtro, objetivo, stop y tiempo máximo — eso sigue siendo la red de seguridad) y le añade una salida nueva: cada 3 minutos, una llamada agrupa TODAS las posiciones abiertas con esta marca y le pide a la IA "vender" o "mantener" por cada una, con precio/tiempo/mejor y peor momento/liquidez/volumen de esa posición (nunca datos futuros). Es una estrategia NUEVA con su propio id (sufijo `_ia`) — no toca la original, compiten por separado y se puede comparar con cifras cuál rinde más. Pensado para probarlo primero en 1-2 de las que ya rinden bien (`sw_call_tp1.25_sl6_liq100` o similar) y, aparte, en alguna que vaya mal, a ver si la IA la cambia de verdad.
+   - Nuevo endpoint `netlify/functions/ai-exit.mjs` (`/api/ai-exit`), con su PROPIO tope diario (`AI_EXIT_DAILY_CALLS`, por defecto 300) para no competir con el presupuesto del analista de diagnóstico (30/día). Usa la misma `ANTHROPIC_API_KEY` y el mismo modelo barato (Haiku).
+   - Si la IA no decide a tiempo (falla la llamada, se agota el presupuesto, Anthropic no responde), la posición sigue su tp/sl/tiempo máximo normal — nunca se queda abierta indefinidamente.
+
+**2. Límite de ganancia diaria** (nuevo campo "LÍMITE DE GANANCIA DIARIA" en Ajustes del bot, por defecto 60€, 0 = sin límite): en cuanto la cartera gana esa cantidad en el día (hora de Madrid), deja de abrir operaciones nuevas hasta el día siguiente — las que ya están abiertas siguen su curso. Se resetea solo a medianoche.
+
+**Para Rachid:** recarga la pestaña para que aparezcan el botón y el nuevo campo. Prueba el botón "Añadir IA" en 1-2 estrategias desde la tabla de ASPIRANTES cuando quieras evaluarlo; si en Netlify quieres cambiar el tope de llamadas de la IA de ventas, la variable es `AI_EXIT_DAILY_CALLS`.
+
 ## 2026-11-26 — arreglo urgente: precio imposible infló "en juego ahora" a +376 millones €
 
 Rachid vio el saldo del BOT en €376.506.352,61 con una posición de $YEE a "38307181,26x". Causa confirmada con el export `sniper-lab-datos-2026-11-26-11-24.json`: hay **6 tokens distintos con el ticker $YEE** (clones, típico de scam en pump.fun), uno con solo **$12,97-$26,24 de liquidez real** (otros: $100,93, $1.504,14). `swAdd()`/`onMigrate()`/`onCall()` nunca comprobaban liquidez antes de vigilar un token, y `swPoll()` aplicaba cualquier cotización de DexScreener sin comprobar que tuviera sentido — en un pool con $12 de liquidez, una sola operación (real o manipulada) puede mover el "precio" x millones sin que exista dinero real detrás. El `cash` real (€967,06) y el único cierre registrado (`$cyber`, pérdida normal -29,4%) estaban bien — lo corrupto era solo el valor "en juego ahora" (`eqAfter: 376.506.352` en el export) de la posición aún abierta, que usa el precio en vivo sin el límite que sí tiene la salida por "objetivo" (`Math.min(precio, objetivo)` en `settle()`). Si esa posición hubiera cerrado por "stop" o "tiempo" en vez de por el objetivo, ese número falso se habría quedado grabado para siempre en el dinero y en las estadísticas de la estrategia.

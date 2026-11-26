@@ -12,3 +12,8 @@
   from = "/api/ai"
   to = "/.netlify/functions/ai"
   status = 200
+
+[[redirects]]
+  from = "/api/ai-exit"
+  to = "/.netlify/functions/ai-exit"
+  status = 200

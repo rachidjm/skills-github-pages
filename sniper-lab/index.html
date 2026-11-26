@@ -204,6 +204,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
       <label for="inMode">CUÁNTO INVIERTE POR OPERACIÓN<select id="inMode"><option value="fixed">Cantidad fija en €</option><option value="pct">% del saldo</option></select></label>
       <label for="inSize" id="lblSize">IMPORTE (€)<input id="inSize" type="number" min="0.1" step="0.5" value="10" inputmode="decimal"></label>
       <label for="inStrat">ESTRATEGIA<select id="inStrat"></select></label>
+      <label for="inDailyLimit">LÍMITE DE GANANCIA DIARIA (€, 0 = sin límite)<input id="inDailyLimit" type="number" min="0" step="1" value="60" inputmode="decimal"></label>
       <button class="go" id="pfReset">Empezar con este capital</button>
       <div class="note" id="pfNote">"Empezar con este capital" pone el saldo a cero y arranca el bot. El bot no entra a ciegas: espera a tener datos suficientes de cada token (al menos 5 compradores y 8 operaciones, mirando hasta 2 minutos) y solo entonces decide. El importe y la estrategia se pueden cambiar en cualquier momento.</div>
     </div>
@@ -293,7 +294,7 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
   <div class="row r3">
     <section class="pn">
       <h2>ASPIRANTES <em id="nStrat">0 estrategias</em></h2>
-      <div class="scroll"><table><thead><tr><th>Estrategia</th><th>Ops</th><th>Acierto</th><th>€/op</th><th>Mín. fiable</th><th>Total</th></tr></thead><tbody id="table"><tr><td colspan="6" style="color:var(--soft)">Esperando operaciones…</td></tr></tbody></table></div>
+      <div class="scroll"><table><thead><tr><th>Estrategia</th><th>Ops</th><th>Acierto</th><th>€/op</th><th>Mín. fiable</th><th>Total</th><th>IA</th></tr></thead><tbody id="table"><tr><td colspan="7" style="color:var(--soft)">Esperando operaciones…</td></tr></tbody></table></div>
     </section>
     <section class="pn">
       <h2>CINTA DE OPERACIONES <em>todas las estrategias</em></h2>
@@ -543,24 +544,27 @@ function regPatternFilter(d) {
   const flt = { id: d.id, txt: d.txt, f, pattern: true };
   (d.side === 'c' ? IFMAP : FMAP).set(d.id, flt);
 }
-function specOf(s) { return s.spec || (s.swing ? { entry: 'swing', sig: s.sig, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: s.hold, up: null, trail: null } : { entry: s.entry, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: CFG.holdMin, up: s.ent.up ?? null, trail: null }); }
-function genId(g) { return `g_${g.entry}${g.sig ? '-' + g.sig : ''}_tp${g.tp}_sl${g.sl}_h${g.hold}_u${g.up ?? 0}_tr${g.trail || 0}_${[...g.filters].sort().join('+')}`; }
+function specOf(s) { return s.spec || (s.swing ? { entry: 'swing', sig: s.sig, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: s.hold, up: null, trail: null, exitAI: s.exitAI || null } : { entry: s.entry, tp: s.tp, sl: s.sl, filters: [s.filter.id], hold: CFG.holdMin, up: s.ent.up ?? null, trail: null, exitAI: s.exitAI || null }); }
+// "exitAI" (2026-11-26, botón "Añadir IA" del laboratorio): la estrategia conserva su tp/sl/hold tal cual (siguen
+// siendo el límite de seguridad si la IA no llega a decidir a tiempo), pero aiExitPoll() puede marcar la salida
+// antes si decide vender. Va en el id para que sea una estrategia NUEVA, nunca sustituye a la original.
+function genId(g) { return `g_${g.entry}${g.sig ? '-' + g.sig : ''}_tp${g.tp}_sl${g.sl}_h${g.hold}_u${g.up ?? 0}_tr${g.trail || 0}_${[...g.filters].sort().join('+')}${g.exitAI ? '_ia' : ''}`; }
 function addGen(g) {
   if (STRAT.has(g.id)) return STRAT.get(g.id);
-  const trTxt = g.trail ? ` · stop dinámico ${g.trail}%` : '';
+  const trTxt = g.trail ? ` · stop dinámico ${g.trail}%` : '', iaTxt = g.exitAI ? ' · venta: decide la IA' : '';
   if (g.entry === 'swing') {
     const SG = SW_SIGS.find(x => x.id === g.sig), fs = g.filters.map(id => SWF.get(id)).filter(Boolean); if (!SG || !fs.length) return null;
     const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
-    const st = { id: g.id, entry: 'swing', ent: {}, swing: true, sig: g.sig, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true,
-      name: `✦ Con volumen · ${SG.txt} · ${filter.txt} · objetivo +${Math.round((g.tp - 1) * 100)}% · stop -${g.sl}%${g.hold !== 60 ? ` · salida ${g.hold} min` : ''}${trTxt}` };
+    const st = { id: g.id, entry: 'swing', ent: {}, swing: true, sig: g.sig, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true, exitAI: !!g.exitAI,
+      name: `✦ Con volumen · ${SG.txt} · ${filter.txt} · objetivo +${Math.round((g.tp - 1) * 100)}% · stop -${g.sl}%${g.hold !== 60 ? ` · salida ${g.hold} min` : ''}${trTxt}${iaTxt}` };
     STRATS.push(st); STRAT.set(st.id, st); return st;
   }
   const E = ENTRIES.find(e => e.id === g.entry); if (!E) return null;
   const FM = E.instant ? IFMAP : E.call ? CFMAP : FMAP, fs = g.filters.map(id => FM.get(id)).filter(Boolean); if (!fs.length) return null;
   const ent = { ...E, up: g.up ?? E.up };
   const filter = { id: g.filters.join('+'), txt: fs.map(f => f.txt).join(' + '), f: (x, t) => fs.every(f => f.f(x, t)) };
-  const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true,
-    name: `✦ ${E.txt}${E.min && ent.up !== E.up ? ` (subida ≥${Math.round((ent.up - 1) * 100)}%)` : ''} · ${filter.txt} · objetivo ${String(g.tp).replace('.', ',')}x · stop -${g.sl}%${g.hold !== CFG.holdMin ? ` · salida ${g.hold} min` : ''}${trTxt}` };
+  const st = { id: g.id, entry: g.entry, ent, tp: g.tp, sl: g.sl, hold: g.hold, trail: g.trail || 0, filter, spec: g, gen: true, exitAI: !!g.exitAI,
+    name: `✦ ${E.txt}${E.min && ent.up !== E.up ? ` (subida ≥${Math.round((ent.up - 1) * 100)}%)` : ''} · ${filter.txt} · objetivo ${String(g.tp).replace('.', ',')}x · stop -${g.sl}%${g.hold !== CFG.holdMin ? ` · salida ${g.hold} min` : ''}${trTxt}${iaTxt}` };
   STRATS.push(st); STRAT.set(st.id, st); return st;
 }
 
@@ -862,7 +866,7 @@ function record(id, net, t, reason, now, p) {
   data.last.unshift({ ts: now, symbol: t.symbol, id, net: +net.toFixed(1), reason }); data.last.length = Math.min(data.last.length, 60);
   if (data.champ && data.champ.id === id) {
     data.champTrades.push({ ts: now, symbol: t.symbol, net: +net.toFixed(2), reason }); if (data.champTrades.length > 300) data.champTrades.shift();
-    log(net > 0 ? 'g' : 'r', `${reason === 'objetivo' ? 'TP' : reason === 'stop' ? 'SL' : 'EXIT'} ${esc(t.symbol)} ${pc(net)} · campeón`);
+    log(net > 0 ? 'g' : 'r', `${reason === 'objetivo' ? 'TP' : reason === 'stop' ? 'SL' : reason === 'ia' ? 'IA' : 'EXIT'} ${esc(t.symbol)} ${pc(net)} · campeón`);
     tape(net > 0 ? 'g' : 'r', net > 0 ? 'TP' : 'SL', `$${t.symbol} ${pc(net)}`);
   }
 }
@@ -1018,6 +1022,18 @@ function registerGen(g, parent) {
   data.gen.push(g); data.stats[g.id] ??= { n: 0, wins: 0, sum: 0, recent: [] };
   data.ideas.unshift({ ts: g.ts, id: g.id, parent: parent.name, why: g.why, ai: !!g.ai }); data.ideas.length = Math.min(data.ideas.length, 40);
   log('p', `${g.ai ? 'IA' : 'IDEA'} ${esc(g.why)} · nueva: ${esc(ns.name)}`); tape('a', g.ai ? 'IA' : 'IDEA', g.why);
+  return ns;
+}
+// Botón "Añadir IA" del laboratorio (a petición de Rachid, 2026-11-26): clona una estrategia EXISTENTE (misma
+// entrada/filtro/tp/sl/hold, para que siga sirviendo de red de seguridad) y le añade salida por IA — nunca toca
+// la original, compiten como estrategias separadas. Pensado para usarse a mano sobre las que ya rinden bien
+// (ver si la IA mejora algo que ya funciona) o sobre las que van mal (ver si la IA las cambia de verdad).
+function addAiVariant(id) {
+  const s = STRAT.get(id); if (!s) return null;
+  const g = { ...specOf(s), exitAI: true }; g.id = genId(g);
+  if (STRAT.has(g.id)) { log('p', `Ya existe la variante con IA de ${esc(s.name)}`); return STRAT.get(g.id); }
+  g.parent = id; g.why = `Añadida a mano desde el laboratorio: misma estrategia, pero la venta la decide la IA`; g.ts = Date.now(); g.ai = false;
+  const ns = registerGen(g, s); if (ns) { save(); fillStratSelect(); }
   return ns;
 }
 function innovate() {
@@ -1265,6 +1281,44 @@ function renderAI() {
     return `<div class="tt"><span class="s" style="color:${it.estado === 'creada' ? 'var(--g)' : 'var(--soft)'}">${it.estado === 'creada' ? 'ARREGLO' : 'NO APLICADO'}</span><span><b>${esc(it.problema)}</b></span><span class="n" style="color:var(--soft)">${esc((it.arreglo?.tipo || '') + ' ' + (it.arreglo?.valor ?? ''))}</span><span class="w">${esc(it.evidencia)}${it.estado !== 'creada' ? ` · ${esc(it.estado)}` : g ? ` · nueva estrategia: ${esc(st(g.id))}` : ''}</span></div>`; }).join('');
 }
 
+// ===================== Venta decidida por IA (estrategias con exitAI, botón "Añadir IA" del laboratorio) =====================
+// Distinto del analista de diagnóstico: aquí la IA no toca parámetros de ninguna estrategia, solo decide vender o
+// mantener una posición YA ABIERTA, con la misma información que vería un stop loss (precio, tiempo abierto, mejor
+// y peor momento, liquidez/volumen recientes) — nunca datos futuros. tp/sl/hold de la estrategia siguen activos
+// como red de seguridad si esta llamada falla, se agota el presupuesto diario, o Anthropic no responde.
+const AI_EXIT_URL = /netlify\.app$/.test(location.hostname) ? '/api/ai-exit' : null;
+let aiExitBusy = false, aiExitErr = '';
+async function aiExitPoll() {
+  if (!AI_EXIT_URL || aiExitBusy || !running) return;
+  const cand = [];
+  for (const m of [tokens, swing]) for (const t of m.values()) for (const [id, p] of t.pos) { if (!p.exiting && STRAT.get(id)?.exitAI) cand.push({ t, id, p }); }
+  if (!cand.length) return;
+  aiExitBusy = true;
+  try {
+    const payload = cand.map(({ t, id, p }) => { const s = STRAT.get(id); return {
+      pos: `${t.mint}|${id}`, estrategia: s.name, señal: t.sigs?.[0]?.x || s.sig || s.entry,
+      cambio_pct: +(((t.mcap / p.entry) - 1) * 100).toFixed(1),
+      mejor_pct: +(((p.hi || 1) - 1) * 100).toFixed(1), peor_pct: +(((p.lo || 1) - 1) * 100).toFixed(1),
+      minutos_abierta: +((Date.now() - p.at) / 60000).toFixed(1),
+      liquidez_usd: t.liq != null ? Math.round(t.liq) : null, volumen_1h_usd: t.volH1 != null ? Math.round(t.volH1) : null,
+      cambio_1h_pct: t.ch1 ?? null, cambio_6h_pct: t.ch6 ?? null,
+      objetivo_pct: Math.round((s.tp - 1) * 100), stop_pct: -s.sl }; });
+    const r = await fetch(AI_EXIT_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { aiExitErr = d.error || ('HTTP ' + r.status); return; }
+    aiExitErr = '';
+    for (const dec of d.decisiones || []) {
+      if (dec.accion !== 'vender') continue;
+      const i = String(dec.pos || '').indexOf('|'); if (i < 0) continue;
+      const mint = dec.pos.slice(0, i), id = dec.pos.slice(i + 1), t = getTok(mint), p = t?.pos.get(id);
+      if (!t || !p || p.exiting) continue;
+      p.exiting = 'ia';
+      log('p', `IA decide vender $${esc(t.symbol)} (${esc(STRAT.get(id)?.name || id)}): ${esc(dec.motivo || '')}`);
+    }
+  } catch (e) { aiExitErr = e.message; } finally { aiExitBusy = false; }
+}
+setInterval(() => aiExitPoll().catch(() => {}), 3 * 60e3);
+
 function setRunning(v) {
   if (v) heartbeat();
   if (v && otherTab) { log('r', 'Hay otro Sniper Lab funcionando en otra pestaña de este navegador: ciérrala o páusala antes de arrancar este.'); toast?.('Ya hay otro bot abierto en otra pestaña: ciérralo primero'); return; }
@@ -1278,11 +1332,18 @@ function setRunning(v) {
 const PF_KEY = 'snlab_portfolio_v1', FALLBACK = 'info_tp2_sl25_clean';
 const money = v => '€' + v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '') + money(Math.abs(v));
-const newPf = (start, mode, size, strategy) => ({ start, cash: start, mode, size, strategy, positions: {}, closed: [], curve: [{ ts: Date.now(), eq: start }], startedAt: Date.now() });
+const newPf = (start, mode, size, strategy, dailyLimit = 60) => ({ start, cash: start, mode, size, strategy, dailyLimit, dayKey: '', dayPl: 0, positions: {}, closed: [], curve: [{ ts: Date.now(), eq: start }], startedAt: Date.now() });
+// Arreglo (2026-11-26): límite de ganancia diaria, a petición de Rachid — una vez el bot gana `dailyLimit` € en un
+// día (hora de Madrid), deja de abrir operaciones nuevas hasta el día siguiente; las que ya están abiertas siguen
+// su curso normal. 0 = sin límite. Se guarda en pf.dailyLimit, editable desde "Ajustes del bot".
+const pfDayKey = ts => madrid(ts, { year: 'numeric', month: '2-digit', day: '2-digit' });
+function pfCheckDay() { const k = pfDayKey(Date.now()); if (pf.dayKey !== k) { pf.dayKey = k; pf.dayPl = 0; pf._limitLogged = false; } }
 let pf = null;
 try { pf = JSON.parse(localStorage.getItem(PF_KEY)); } catch {}
 if (!pf || !pf.positions) pf = newPf(100, 'fixed', 10, 'auto');
 if (!Number.isFinite(pf.cash)) { pf.cash = (pf.closed || []).filter(c => Number.isFinite(c.got) && Number.isFinite(c.inv)).reduce((a, c) => a + c.got - c.inv, pf.start || 100); }
+if (!Number.isFinite(pf.dailyLimit)) pf.dailyLimit = 60;   // carteras guardadas antes de este arreglo: límite por defecto
+pf.dayKey ??= ''; pf.dayPl ??= 0;
 pf.closed = (pf.closed || []).filter(c => Number.isFinite(c.got)); pf.curve = (pf.curve || []).filter(c => Number.isFinite(c.eq));
 const botWhy = { seen: 0, veto: 0, data: 0, filter: 0, ok: 0 };
 const pfSave = () => { try { localStorage.setItem(PF_KEY, JSON.stringify(pf)); } catch {} };
@@ -1329,6 +1390,11 @@ function pfTargets() {
 }
 function pfOnOpen(t, id) {
   if (!pfTargets().has(id)) return;
+  pfCheckDay();
+  if (pf.dailyLimit > 0 && pf.dayPl >= pf.dailyLimit) {
+    if (!pf._limitLogged) { log('p', `LÍMITE DIARIO alcanzado: +${money(pf.dayPl)} hoy (objetivo ${money(pf.dailyLimit)}) · no se abren más operaciones hasta mañana`); pf._limitLogged = true; pfSave(); }
+    return;
+  }
   if (Object.values(pf.positions).some(p => p.mint === t.mint)) return;   // una sola posición por moneda
   const key = t.mint + '|' + id; if (pf.positions[key]) return;
   let inv = pf.mode === 'pct' ? pfEquity() * pf.size / 100 : pf.size;
@@ -1342,6 +1408,7 @@ function pfOnOpen(t, id) {
 function pfOnClose(t, id, raw, reason, now) {
   const key = t.mint + '|' + id, p = pf.positions[key]; if (!p) return;
   const got = pfValue(p.inv, Number.isFinite(raw) ? raw : 1, STRAT.get(id)?.swing); pf.cash += got; delete pf.positions[key];
+  pfCheckDay(); pf.dayPl += got - p.inv;
   const eq = pfEquity(), pl = got - p.inv;
   pf.closed.unshift({ ts: now, symbol: p.symbol, mint: p.mint, id, inv: p.inv, got, reason, held: (now - p.at) / 1000, eqAfter: eq });
   pf.closed.length = Math.min(pf.closed.length, 500);
@@ -1365,21 +1432,23 @@ $('obs').addEventListener('pointerleave', () => { hlIn = -1; });
 $('stack').addEventListener('pointerover', e => { const d = e.target.closest('.dc'); hlOut = d ? Number(d.dataset.i) : -1; hlTok = d ? stack[hlOut]?.tk || null : null; });
 $('stack').addEventListener('pointerleave', () => { hlOut = -1; hlTok = null; });
 $('stack').addEventListener('click', e => { const d = e.target.closest('.dc'); if (d) { pinned = stack[Number(d.dataset.i)]?.tk || null; } });
+$('table').addEventListener('click', e => { const b = e.target.closest('button[data-ia]'); if (b && !b.disabled) addAiVariant(b.dataset.ia); });
 // Cifras grandes que se animan al cambiar
 function tween(el, to, fmt) { const from = el._v ?? to; el._v = to; if (from === to) { el.textContent = fmt(to); return; } const t0 = performance.now(); const step = n => { const k = Math.min(1, (n - t0) / 650), e = 1 - (1 - k) ** 3; el.textContent = fmt(from + (to - from) * e); if (k < 1) requestAnimationFrame(step); }; requestAnimationFrame(step); }
 function toast(msg) { const el = $('toast'); el.textContent = msg; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 4500); }
 // Ajustes
-const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat');
+const inStart = $('inStart'), inMode = $('inMode'), inSize = $('inSize'), inStrat = $('inStrat'), inDailyLimit = $('inDailyLimit');
 function fillStratSelect() { const v = inStrat.value; inStrat.innerHTML = '<option value="auto">Automática: las 10 mejores del torneo</option>' + [...STRATS].filter(s => !data.discarded[s.id] || s.id === pf.strategy).sort((a, b) => a.name.localeCompare(b.name)).map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join(''); if (v) inStrat.value = v; }
 fillStratSelect();
-const syncInputs = (all = false) => { if (all) inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
+const syncInputs = (all = false) => { if (all) inStart.value = pf.start; inMode.value = pf.mode; inSize.value = pf.size; inStrat.value = pf.strategy; inDailyLimit.value = pf.dailyLimit; $('lblSize').firstChild.textContent = pf.mode === 'pct' ? '% DEL SALDO' : 'IMPORTE (€)'; };
 syncInputs(true);
 inMode.onchange = () => { pf.mode = inMode.value; pf.size = pf.mode === 'pct' ? 10 : Math.max(1, Math.round((Number(inStart.value) || pf.start) / 10)); syncInputs(); pfSave(); };
 inSize.onchange = () => { const v = Number(inSize.value); if (v > 0) pf.size = v; syncInputs(); pfSave(); };
 inStrat.onchange = () => { pf.strategy = inStrat.value; pfSave(); log('c', `Estrategia del bot: ${inStrat.value === 'auto' ? 'automática (campeona)' : esc(STRAT.get(inStrat.value).name)}`); };
+inDailyLimit.onchange = () => { const v = Number(inDailyLimit.value); pf.dailyLimit = v >= 0 ? v : 60; pf._limitLogged = false; syncInputs(); pfSave(); log('c', `Límite de ganancia diaria: ${pf.dailyLimit > 0 ? money(pf.dailyLimit) : 'sin límite'}`); };
 $('pfReset').onclick = () => {
   const v = Number(inStart.value); if (!(v > 0)) { inStart.focus(); return; }
-  pf = newPf(v, inMode.value, Number(inSize.value) > 0 ? Number(inSize.value) : 10, inStrat.value); syncInputs(true); pfSave();
+  pf = newPf(v, inMode.value, Number(inSize.value) > 0 ? Number(inSize.value) : 10, inStrat.value, Number(inDailyLimit.value) >= 0 ? Number(inDailyLimit.value) : 60); syncInputs(true); pfSave();
   log('c', `Nueva cartera: ${money(v)} · ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación`); lastClosedLen = -1;
   if (!running) setRunning(true);
   toast(`Cartera reiniciada con ${money(v)} · invierte ${pf.mode === 'pct' ? pf.size + '% del saldo' : money(pf.size)} por operación · bot en marcha`);
@@ -1663,7 +1732,10 @@ function renderMain() {
   // Aspirantes
   const sc = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(Boolean).sort((a, b) => (b.n >= 10) - (a.n >= 10) || b.lb - a.lb).slice(0, 15);
   const nDisc = Object.keys(data.discarded).length; $('nStrat').textContent = `${STRATS.length - nDisc} activas · ${nDisc} descartadas · top 15`;
-  if (sc.length) $('table').innerHTML = sc.map(x => `<tr class="${data.champ?.id === x.id ? 'ch' : ''}"><td>${esc(STRAT.get(x.id).name)}</td><td>${data.stats[x.id].n}</td><td>${Math.round(x.wr)}%</td><td style="color:${x.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.mean / 100)}</td><td style="color:${x.lb >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.lb / 100)}</td><td>${eur(data.stats[x.id].sum / 100)}</td></tr>`).join('');
+  if (sc.length) $('table').innerHTML = sc.map(x => { const s = STRAT.get(x.id);
+    const iaId = s.exitAI ? null : genId({ ...specOf(s), exitAI: true }), hasIa = s.exitAI || STRAT.has(iaId);
+    const iaCell = s.exitAI ? '<span style="color:var(--soft)">venta: IA</span>' : `<button data-ia="${esc(x.id)}" ${hasIa ? 'disabled' : ''} style="font-size:.8em;padding:.2em .5em">${hasIa ? 'Ya tiene' : 'Añadir IA'}</button>`;
+    return `<tr class="${data.champ?.id === x.id ? 'ch' : ''}"><td>${esc(s.name)}</td><td>${data.stats[x.id].n}</td><td>${Math.round(x.wr)}%</td><td style="color:${x.mean >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.mean / 100)}</td><td style="color:${x.lb >= 0 ? 'var(--g)' : 'var(--r)'}">${eur(x.lb / 100)}</td><td>${eur(data.stats[x.id].sum / 100)}</td><td>${iaCell}</td></tr>`; }).join('');
   // Cinta de operaciones
   if (data.last.length) $('trades').innerHTML = data.last.map(o => `<div class="tt"><span class="s" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${o.net > 0 ? 'ACIERTO' : 'FALLO'}</span><span><b>$${esc(o.symbol)}</b> · ${o.reason}</span><span class="n" style="color:${o.net > 0 ? 'var(--g)' : 'var(--r)'}">${pc(o.net)}</span><span class="w">${esc(STRAT.get(o.id)?.name || o.id)} · ${madrid(o.ts, { hour: '2-digit', minute: '2-digit' })}</span></div>`).join('');
   const xc = $('xChip');
@@ -1766,9 +1838,9 @@ for (const b of $('hsel').querySelectorAll('button')) b.onclick = () => { hourMe
 // Exporta todo lo aprendido para analizarlo fuera (Claude Code). Nunca incluye la sesión de Telegram ni claves.
 $('dump').onclick = () => {
   const tg = window.__tg?.st ? { calls: window.__tg.st.calls, chats: window.__tg.st.chats, sugg: window.__tg.st.sugg, ranking: window.__tg.ranking?.() } : null;
-  const strategies = STRATS.map(s => { const x = scoreOf(s.id), st = data.stats[s.id]; return { id: s.id, name: s.name, gen: !!s.gen, discarded: !!data.discarded[s.id], n: st.n, wins: st.wins, sum: +st.sum.toFixed(2), reasons: st.rs || {}, mean: x ? +x.mean.toFixed(2) : null, lb: x ? +x.lb.toFixed(2) : null }; });
+  const strategies = STRATS.map(s => { const x = scoreOf(s.id), st = data.stats[s.id]; return { id: s.id, name: s.name, gen: !!s.gen, exitAI: !!s.exitAI, discarded: !!data.discarded[s.id], n: st.n, wins: st.wins, sum: +st.sum.toFixed(2), reasons: st.rs || {}, mean: x ? +x.mean.toFixed(2) : null, lb: x ? +x.lb.toFixed(2) : null }; });
   const out = { exportedAt: new Date().toISOString(), version: 1, cfg: CFG, champ: data.champ, strategies, trades: data.trs || [], ideas: data.ideas, ai: data.ai, gen: data.gen, patternFilters: data.pf, hours: data.hours, reasons: data.reasons, totals: data.totals,
-    samples, patterns: { c: patterns.c, d: patterns.d, base0: patterns.base0, base1: patterns.base1 }, topWallets: topList, portfolio: { start: pf.start, cash: pf.cash, closed: pf.closed.slice(0, 200), strategy: pf.strategy }, telegram: tg,
+    samples, patterns: { c: patterns.c, d: patterns.d, base0: patterns.base0, base1: patterns.base1 }, topWallets: topList, portfolio: { start: pf.start, cash: pf.cash, closed: pf.closed.slice(0, 200), strategy: pf.strategy, dailyLimit: pf.dailyLimit, dayPl: +((pf.dayPl || 0).toFixed(2)) }, telegram: tg,
     swing: [...swing.values()].map(t => ({ mint: t.mint, symbol: t.symbol, dex: t.dex, liq: t.liq, volH1: t.volH1, ch1: t.ch1, ch6: t.ch6, sigs: t.sigs })) };
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
   a.download = `sniper-lab-datos-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
