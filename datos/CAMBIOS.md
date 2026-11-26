@@ -2,6 +2,16 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-26 — las comunidades entran en la minería de patrones automática
+
+Rachid pidió que el bot invente estrategias solas según lo que vaya funcionando ("si las comunidades dan buenos calls, o si ciertas wallets tienen buena tasa de x2, que el bot se monte una estrategia"). Buena noticia: **ya existe un motor así, `minePatterns()`** (línea ~960), corriendo cada 5 minutos desde el primer ciclo — mira cada rasgo de `D_FEATS`/`C_FEATS` contra las monedas que subieron de verdad, y si uno predice bien (mejora un 40%+ sobre la media, con margen estadístico) se crea sola una estrategia nueva con ese rasgo como filtro, sin que nadie lo pida. Lo de "wallets con buena tasa de x2" también existe: `scoreWallets()`/`rankWallets()` llevan un ranking propio (cota de Wilson sobre el acierto a 2x) de cada wallet que compra pronto, y el mejor 50 entra en `D_FEATS.smart` — minePatterns() YA prueba ese rasgo solo.
+
+**Lo que faltaba:** `D_FEATS` no incluía las llamadas de comunidades (`tgCalls`, menciones en X) — solo existían como filtro FIJO (`tgcall`, umbral ">=1 llamada" puesto a mano, sin ajustarse). Añadidas `tgCalls`, `xMentions` y `xBig` a `D_FEATS` ([index.html:540](sniper-lab/index.html#L540)): ahora minePatterns() las prueba igual que todo lo demás y ajusta solo el umbral que mejor prediga con los datos reales, en vez del ">=1" fijo. Si las comunidades (Telegram ya conectado; X sigue parado a propósito) empiezan a dar buenos calls, el bot se monta la estrategia sin esperar a un ciclo de Claude Code.
+
+**Para que conste (ya existían, no son nuevos):** estrategias como `info_tp2_sl25_tgcall`, `confirm_tp1.5_sl40_smart2`, `info_tp3_sl25_confluence` o `call_tp2_sl25_topcomm_tr15` llevan corriendo desde el principio — son combinaciones fijas de comunidad/wallets-top ya en el torneo. Lo nuevo de hoy es que, ADEMÁS de esas, el motor automático ahora también explora comunidades con sus propios umbrales, no solo wallets.
+
+**Límite conocido, no resuelto hoy:** `minePatterns()` solo mina patrones de la rama "moneda nueva de pump.fun" (`tokens`, vía `finishToken()`); no cubre todavía el mundo "monedas con volumen" (`swing`: reclaim/dip/breakout/whalehunt), que es donde más operaciones se están dando últimamente. Ampliar la minería a ese mundo es un cambio más grande (hay que decidir qué rasgos medir ahí) — lo dejo anotado para cuando haya ganas de abordarlo.
+
 ## 2026-11-26 — nueva señal "whalehunt" (caza de ballenas), idea de Rachid
 
 Estrategia propuesta por Rachid: no adivinar el suelo, usar a los grandes tenedores como rastreadores — si una ballena tira el precio para barrer stops pero se queda con la mayoría de su posición, va a recomprar más abajo; el bot entra justo cuando el precio recupera el suelo roto. Pidió montarlo sin pagar nada salvo que fuera estrictamente necesario.

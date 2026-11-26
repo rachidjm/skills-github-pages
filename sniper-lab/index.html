@@ -537,7 +537,12 @@ for (const g of ['call', 'grad']) for (const tp of [1.5, 2]) {
 const SWF = new Map(SW_FILTERS.map(f => [f.id, f]));
 // ---- Patrones: rasgos medibles de cada moneda (al lanzar = "c", al decidir = "d") ----
 const C_FEATS = { devBuy: 'compra del creador (SOL)', copies: 'copias del nombre en 1 h', creatorLaunches: 'lanzamientos del creador en 1 h', symLen: 'letras del símbolo', nameWords: 'palabras del nombre', mayhem: 'modo mayhem' };
-const D_FEATS = { uniqueBuyers: 'compradores', buyVol: 'SOL comprados', score: 'riesgo (100 = limpio)', top10: '% en manos del top 10', sniperHeld: '% de francotiradores', slot0Pct: '% comprado en el primer bloque', devLaunchPct: '% del creador al lanzar', maxBuy: 'compra más grande (SOL)', smart: 'traders top dentro', bundleBuys: 'compras en el bloque inicial', decSec: 'segundos hasta tener datos', trades: 'operaciones al decidir', impact: 'caída si vende la mayor cartera', accel: 'compras acelerando', devSold: 'el creador ya vendió' };
+const D_FEATS = { uniqueBuyers: 'compradores', buyVol: 'SOL comprados', score: 'riesgo (100 = limpio)', top10: '% en manos del top 10', sniperHeld: '% de francotiradores', slot0Pct: '% comprado en el primer bloque', devLaunchPct: '% del creador al lanzar', maxBuy: 'compra más grande (SOL)', smart: 'traders top dentro', bundleBuys: 'compras en el bloque inicial', decSec: 'segundos hasta tener datos', trades: 'operaciones al decidir', impact: 'caída si vende la mayor cartera', accel: 'compras acelerando', devSold: 'el creador ya vendió',
+  // Nuevo (2026-11-26, a petición de Rachid): "smart" ya se minaba solo, pero las llamadas de comunidades (Telegram/X)
+  // solo existían como filtro fijo ("tgcall" = 1+ llamadas, umbral a mano). Al añadirlas aquí, minePatterns() las
+  // prueba igual que todo lo demás y AJUSTA SOLO el umbral que mejor prediga con los datos reales — si de repente
+  // las comunidades empiezan a dar buenos calls, el bot se monta una estrategia nueva sin que nadie se lo pida.
+  tgCalls: 'llamadas de Telegram', xMentions: 'menciones en X', xBig: 'menciones en X de cuentas grandes' };
 const fmtThr = v => String(Math.abs(v) < 1 && v !== 0 ? +v.toPrecision(2) : +v.toFixed(2)).replace('.', ',');
 function regPatternFilter(d) {
   if (FMAP.has(d.id) || IFMAP.has(d.id)) return;
