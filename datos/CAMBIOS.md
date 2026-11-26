@@ -2,6 +2,18 @@
 
 Cada ciclo de Claude Code añade aquí qué cambió, por qué (con la cifra) y qué espera ver en el siguiente export.
 
+## 2026-11-26 — el bug de los millones se repitió ($Pinky, x221.798.046): segunda red de seguridad
+
+El primer arreglo (solo saltos >25x con <50.000 $ de liquidez) no bastó — Rachid lo vio repetirse con $Pinky mostrando +€2.179.962.561 "en juego ahora". Hipótesis más probable: una "escalera" de varios saltos medianos seguidos, cada uno por debajo del 25x y por tanto nunca descartado, acumulándose contra un precio base que ya se iba moviendo (el umbral comparaba siempre contra el ÚLTIMO precio aceptado, que ya podía estar algo inflado) — y/o la liquidez reportada también mal en ese instante, esquivando esa parte de la condición.
+
+**Dos cambios, independientes entre sí a propósito (si uno falla, el otro sigue protegiendo):**
+1. **Umbral de salto mucho más estricto en `swPoll()`** ([index.html:1330](sniper-lab/index.html#L1330)): de ">25x con <50.000 $ de liquidez" a simplemente ">5x de golpe", sin mirar la liquidez (que puede estar corrupta a la vez). Una subida real de 5x en los 20 segundos entre dos sondeos no pasa ni en el pump más agresivo, y ninguna estrategia apunta a un objetivo mayor de 3x — no se pierde nada real.
+2. **Tope absoluto nuevo, `PRICE_SANE_CAP = 50`** ([index.html:399](sniper-lab/index.html#L399)): pase lo que pase con el dato de precio, ningún multiplicador cuenta por encima de 50x — ni para cerrar una posición (`settle()`, ahora para CUALQUIER motivo de salida, no solo "objetivo" como antes), ni para lo que se ve en pantalla (`pfOpenValue()`, la fila de "Operando ahora"). Esto cubre el caso que el primer arreglo no podía cubrir: si el precio YA nace mal desde la primera lectura (antes de que haya un precio anterior con el que comparar el salto), el límite de arriba no sirve de nada — este sí, porque no depende de ninguna lectura anterior, solo del precio de entrada de la posición.
+
+Las bajadas de precio siguen sin bloquearse nunca (hace falta para que funcionen dip/stop/reclaim, y para que una posición ya corrupta se autocorrija en el siguiente sondeo real).
+
+**Para Rachid:** recarga la pestaña — la posición de $Pinky debería bajar a un número con sentido (como mucho 50x de lo invertido) en cuanto se recargue, y corregirse del todo en el siguiente sondeo real (20 s).
+
 ## 2026-11-26 — la minería de patrones llega también a "monedas con volumen"
 
 Ampliación pedida por Rachid del motor `minePatterns()` (que solo cubría pump.fun) al mundo `swing` (reclaim/dip/breakout/whalehunt/grad/call), que es donde más se mueve el bot últimamente y no tenía minería automática.

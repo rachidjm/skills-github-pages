@@ -389,6 +389,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const eur = v => (v < 0 ? '-' : v > 0 ? '+' : '') + '€' + Math.abs(v).toFixed(2).replace('.', ',');
 const pc = (v, d = 1) => Number.isFinite(v) ? (v > 0 ? '+' : '') + v.toFixed(d).replace('.', ',') + '%' : '–';
 const okPx = v => Number.isFinite(v) && v > 0;   // precio válido para abrir o cerrar una posición
+// Arreglo (2026-11-26): el bug de los $YEE (precio x38.000.000 por un fallo del dato en un pool sin liquidez real)
+// volvió a pasar con $Pinky (x221.798.046) pese al primer arreglo en swPoll — esa vez subía de golpe; esta vez
+// probablemente en varios saltos medianos seguidos que cada uno por separado no parecía tan disparatado ("escalera").
+// Segunda red de seguridad, independiente de cómo llegue el dato malo: ningún multiplicador de precio sobre una
+// posición cuenta por encima de este tope, ni para cerrar (settle) ni para lo que se ve en pantalla (pfOpenValue,
+// la fila de "Operando ahora"). Ninguna estrategia tiene un objetivo ni remotamente cerca de esto (máximo 3x), así
+// que no cambia ningún resultado real — solo evita que un dato corrupto se convierta en dinero o estadísticas falsas.
+const PRICE_SANE_CAP = 50;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const b58 = b => { const d = [0]; for (const x of b) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c) { d.push(c % 58); c = (c / 58) | 0; } } let s = ''; for (const x of b) { if (x) break; s += '1'; } return s + d.reverse().map(i => B58[i]).join(''); };
@@ -842,9 +850,10 @@ function tryEntries(t, now) {
 }
 function settle(t, now, forceAll = false) {
   for (const [id, p] of t.pos) {
-    const s = STRAT.get(id), m = t.mcap / p.entry;
+    const s = STRAT.get(id);
     if (!s || !okPx(p.entry)) { t.pos.delete(id); continue; }   // posición inválida: se descarta sin contarla
     if (!okPx(t.mcap)) continue;
+    const m = Math.min(t.mcap / p.entry, PRICE_SANE_CAP);   // tope de cordura (ver PRICE_SANE_CAP): cubre cualquier motivo de salida, no solo "objetivo"
     p.hi = Math.max(p.hi || 1, m); p.lo = Math.min(p.lo || 1, m);    // lo mejor y lo peor que llegó a ir (para el analista)
     let reason = null;
     if (p.exiting) reason = p.exiting;
@@ -854,7 +863,7 @@ function settle(t, now, forceAll = false) {
     else if (forceAll) reason = 'sin actividad';
     else if (now - p.at > (s.hold || CFG.holdMin) * 60e3) reason = 'tiempo';
     if (!reason) continue;
-    const raw = (reason === 'objetivo' ? Math.min(t.mcap, p.trig || t.mcap) : t.mcap) / p.entry;
+    const raw = reason === 'objetivo' ? Math.min(m, s.tp) : m;
     if (!Number.isFinite(raw)) { t.pos.delete(id); continue; }
     pfOnClose(t, id, raw, reason, now);
     record(id, s.swing ? netSwing(raw) : netReturn(raw), t, reason, now, p);
@@ -1309,13 +1318,17 @@ async function swPoll() {
       const byPair = new Map(ps.map(p => [p.pairAddress, p])), now = Date.now();
       for (const t of chunk) { const p = byPair.get(t.pair); if (!p || !(+p.priceUsd > 0)) continue;
         const price = +p.priceUsd, liqUsd = p.liquidity?.usd || 0;
-        // Arreglo (2026-11-26): $YEE (varios tickers clonados, uno con 12-26 $ de liquidez real) dio una cotización
-        // de 38.000.000x que infló "en juego ahora" a +376 millones € — un pool así de vacío no soporta ese precio
-        // de verdad, es manipulación o fallo del dato. Si sube >25x de golpe con <50.000 $ de liquidez, se descarta
-        // esta lectura entera (no toca mcap/max/min/serie, no llama a settle ni a swEnter): se vuelve a mirar en 20 s.
-        // Las bajadas (incluida la vuelta a la normalidad tras un salto falso) nunca se bloquean.
-        if (t.mcap > 0 && price / t.mcap > 25 && liqUsd < 50000) {
-          log('r', `AVISO precio descartado $${esc(t.symbol)}: saltó a ${(price / t.mcap).toFixed(0)}x con solo ${Math.round(liqUsd).toLocaleString('es-ES')} $ de liquidez · probable manipulación o fallo del dato`);
+        // Arreglo (2026-11-26, $YEE): cotización de 38.000.000x en un pool sin liquidez real infló "en juego ahora"
+        // a +376 millones €. Primer intento: descartar solo saltos >25x con <50.000 $ de liquidez. Se repitió con
+        // $Pinky (x221.798.046) — probablemente en varios saltos medianos seguidos (cada uno <25x no se veía tan mal,
+        // pero se acumulan: el umbral se comparaba contra el último precio YA aceptado, así que subía "en escalera"
+        // sin disparar nunca la alarma) y/o con la liquidez también mal reportada en ese mismo instante.
+        // Ahora: cualquier subida >5x de golpe se descarta, sin mirar la liquidez (una subida real de 5x en 20 s no
+        // pasa ni en el pump más agresivo, y ninguna estrategia tiene un objetivo mayor de 3x). Las bajadas nunca se
+        // bloquean (hace falta para que funcionen dip/stop/reclaim). Además, PRICE_SANE_CAP (más arriba) pone un
+        // tope absoluto de 50x en todo lo que cuenta como dinero o estadística, por si esto tampoco bastara.
+        if (t.mcap > 0 && price / t.mcap > 5) {
+          log('r', `AVISO precio descartado $${esc(t.symbol)}: saltó a ${(price / t.mcap).toFixed(0)}x de golpe (liquidez reportada ${Math.round(liqUsd).toLocaleString('es-ES')} $) · probable manipulación o fallo del dato`);
           continue;
         }
         t.mcap = price; t.max = Math.max(t.max, price); t.min = Math.min(t.min, price); swUpd(t, p);
@@ -1482,7 +1495,7 @@ function pfTarget() {
   const c = STRATS.filter(s => !data.discarded[s.id]).map(s => scoreOf(s.id)).filter(x => x && x.n >= 10).sort((a, b) => b.lb - a.lb)[0];
   return c ? c.id : FALLBACK;
 }
-function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = getTok(p.mint); inv += p.inv; val += pfValue(p.inv, t ? t.mcap / p.entry : 1, STRAT.get(p.id)?.swing); } return { inv, val }; }
+function pfOpenValue() { let inv = 0, val = 0; for (const p of Object.values(pf.positions)) { const t = getTok(p.mint); inv += p.inv; val += pfValue(p.inv, t ? Math.min(t.mcap / p.entry, PRICE_SANE_CAP) : 1, STRAT.get(p.id)?.swing); } return { inv, val }; }
 const pfEquity = () => pf.cash + pfOpenValue().val;
 // Modo automático: la cartera opera con las 10 mejores estrategias a la vez (campeona primero), una posición por moneda
 let pfSetCache = { ts: 0, ids: new Set() };
@@ -1627,7 +1640,7 @@ function renderBot() {
   drawEq(); drawDonut(pf.cash, Math.min(inv, val), Math.max(0, val - inv));
   // Posiciones abiertas
   const rows = Object.values(pf.positions).map(p => {
-    const t = getTok(p.mint), raw = t ? t.mcap / p.entry : 1, st = STRAT.get(p.id), v = pfValue(p.inv, raw, st?.swing), d = v - p.inv, lo = 1 - st.sl / 100;
+    const t = getTok(p.mint), raw = t ? Math.min(t.mcap / p.entry, PRICE_SANE_CAP) : 1, st = STRAT.get(p.id), v = pfValue(p.inv, raw, st?.swing), d = v - p.inv, lo = 1 - st.sl / 100;
     const at = Math.max(0, Math.min(100, 100 * Math.log(raw / lo) / Math.log(st.tp / lo)));
     return `<tr><td><b>$${esc(p.symbol)}</b><br><span class="sub">${esc(st.name)}</span></td><td>${money(p.inv)}</td><td>${money(v)}</td><td class="big-pl" style="color:${col(d)}">${signed(d)}<br><span style="font-size:11px">${pc(100 * d / p.inv)}</span></td><td>${raw.toFixed(2).replace('.', ',')}x</td><td><span class="barx"><i style="left:${at}%"></i></span></td><td>${dur((Date.now() - p.at) / 1000)}</td></tr>`;
   });
