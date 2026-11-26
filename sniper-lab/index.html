@@ -371,7 +371,12 @@ button.go:not(:disabled):hover{box-shadow:0 8px 28px rgba(62,240,138,.35)}button
 // ===================== Configuración =====================
 const CFG = { sizeEur: 10, windowSec: 20, holdMin: 15, inactiveMin: 5, trackMaxMin: 30, pollMs: 2500,
   // feePct 1,25% = curva de Pump.fun; PumpPortal solo se usa como radar (en real se compraría directo)
-  feePct: 1.25, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80, minN: 30, supply: 1e9,
+  feePct: 1.25, slipPct: 1, netFeeSol: 0.0002, maxTxPerToken: 45, concurrency: 6, recentN: 80,
+  // Arreglo (2026-11-26, 5º ciclo): con minN=30 y ~0,4 ops/estrategia cada 5,5h, ninguna estrategia llegaba a esta
+  // barrera tras días en marcha (la mejor, sw_call_tp1,25_sl6_liq100, se quedó en n=16) — el laboratorio nunca
+  // "graduaba" a ningún campeón fiable. Bajado a 20: la fórmula lb=media-sd/√n ya se ensancha sola con menos datos,
+  // así que no relaja el criterio, solo permite decidir ~33% antes con la misma exigencia estadística relativa.
+  minN: 20, supply: 1e9,
   minBuyers: 5, minTrades: 8, maxWaitSec: 120, recheckSec: 30, confirmSec: 60, watchMin: 20 };   // decide cuando hay datos suficientes (máx. 2 min)
 const RPC = 'https://solana-rpc.publicnode.com', PP = 'wss://pumpportal.fun/api/data', STORE = 'snlab_arena_v1';
 let solEur = 130;
@@ -1064,7 +1069,11 @@ setInterval(innovate, 10 * 60e3); setTimeout(innovate, 90e3);
 // caída fuerte con rebote, o ruptura del máximo. Todas gratis y sin claves.
 const swing = new Map(); let swLastRefresh = 0, swErr = '';
 function getTok(m) { return tokens.get(m) || swing.get(m); }
-const SWC = { fee: 0.3, slip: 0.5, notional: 10, minLiq: 30000, minVolH1: 10000, n: 30 };
+// Arreglo (2026-11-26, 5º ciclo): "n" es cuántas monedas vigila la señal de volumen a la vez (swRefresh cada 15 min).
+// Las señales (reclaim/dip/breakout) son las que más operaciones dan, pero solo 30 candidatas es poco margen para
+// que salten — subido a 60 y de 3 a 5 páginas de GeckoTerminal (más abajo) para tener más candidatas donde elegir
+// antes del filtro de liquidez/volumen. Coste: el doble de llamadas a DexScreener cada 20 s, ambas gratis y sin clave.
+const SWC = { fee: 0.3, slip: 0.5, notional: 10, minLiq: 30000, minVolH1: 10000, n: 60 };
 function netSwing(raw) { const c = (SWC.fee + SWC.slip) / 100, fix = CFG.netFeeSol * solEur / SWC.notional; return (((1 - fix) / (1 + c)) * raw * (1 - c) - fix - 1) * 100; }
 const jget = async u => { try { const r = await fetch(u); return r.ok ? await r.json() : null; } catch { return null; } };
 let swGeckoNext = 0;
@@ -1074,7 +1083,7 @@ function swUpd(t, p) { t.liq = p.liquidity?.usd || 0; t.vol24 = p.volume?.h24 ||
 async function swRefresh() {
   swLastRefresh = Date.now();
   const cands = new Set(), SK = new Set(['So11111111111111111111111111111111111111112', 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY9NL8UdbTXkvVb1']);
-  for (const pg of [1, 2, 3]) { const d = await swGecko('https://api.geckoterminal.com/api/v2/networks/solana/trending_pools?page=' + pg); for (const x of d?.data || []) cands.add(String(x.relationships?.base_token?.data?.id || '').replace('solana_', '')); }
+  for (const pg of [1, 2, 3, 4, 5]) { const d = await swGecko('https://api.geckoterminal.com/api/v2/networks/solana/trending_pools?page=' + pg); for (const x of d?.data || []) cands.add(String(x.relationships?.base_token?.data?.id || '').replace('solana_', '')); }
   for (const u of ['https://api.dexscreener.com/token-boosts/top/v1', 'https://api.dexscreener.com/token-boosts/latest/v1', 'https://api.dexscreener.com/token-profiles/latest/v1']) for (const x of (await jget(u)) || []) if (x.chainId === 'solana') cands.add(x.tokenAddress);
   const all = [...cands].filter(m => m && !SK.has(m)), best = {};
   for (let i = 0; i < all.length; i += 30) for (const p of (await jget('https://api.dexscreener.com/tokens/v1/solana/' + all.slice(i, i + 30).join(','))) || []) { const m = p.baseToken?.address; if (m && (!best[m] || (p.liquidity?.usd || 0) > (best[m].liquidity?.usd || 0))) best[m] = p; }
